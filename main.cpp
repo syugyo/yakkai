@@ -73,24 +73,26 @@ namespace yakkai
     //
     struct integer_value : public node
     {
-        integer_value( std::string const& v )
+        integer_value( std::string const& radix, std::string number )
             : node( node_type::e_integer )
-            , value( v )
+            , radix( radix )
+            , number( number )
             {}
 
-        std::string value;
+        std::string radix, number;
     };
 
 
     //
     struct float_value : public node
     {
-        float_value( std::string const& v )
+        float_value( std::string const& number, std::string exp = "" )
             : node( node_type::e_float )
-            , value( v )
+            , number( number )
+            , exp( exp )
             {}
 
-        std::string value;
+        std::string number, exp;
     };
 
 
@@ -109,7 +111,7 @@ namespace yakkai
     }
 
 
-
+#if 0
     auto print( node const* const n, std::size_t indent = 0 )
         -> void
     {
@@ -135,7 +137,7 @@ namespace yakkai
             std::cout << space << "!!Unknown!!" << std::endl;
         }
     }
-
+#endif
 
 
 
@@ -163,19 +165,19 @@ namespace yakkai
                 assert( c->cdr->type == node_type::list );
                 c = static_cast<cons const* const>( c->cdr );
             }
-            std::cout << ")";
+            std::cout << "): list";
 
         } else if ( n->type == node_type::symbol ) {
             auto s = static_cast<symbol const* const>( n );
-            std::cout << s->value;
+            std::cout << s->value << ": symbol";
 
         } else if ( n->type == node_type::e_integer ) {
             auto s = static_cast<integer_value const* const>( n );
-            std::cout << s->value;
+            std::cout << s->number << "(" << s->radix << "): int";
 
         } else if ( n->type == node_type::e_float ) {
-            auto s = static_cast<symbol const* const>( n );
-            std::cout << s->value;
+            auto s = static_cast<float_value const* const>( n );
+            std::cout << s->number << "e" << s->exp << ": float";
 
         } else {
             std::cout << "!!Unknown!!";
@@ -299,7 +301,7 @@ namespace yakkai
         if ( is_eof( rng_it ) ) return;
 
         //expect_not_eof( it, end );
-        while( std::isspace( *rng_it ) ) {
+        while( !is_eof( rng_it ) && std::isspace( *rng_it ) ) {
             step_iterator( rng_it );
         }
     }
@@ -316,9 +318,11 @@ namespace yakkai
         if ( ( *rng_it >= 'A' && *rng_it <= 'Z' ) || ( *rng_it >= 'a' && *rng_it <= 'z' ) ) {
             step_iterator( rng_it );
 
-            while( ( *rng_it >= 'A' && *rng_it <= 'Z' )
-                   || ( *rng_it >= 'a' && *rng_it <= 'z' )
-                   || ( *rng_it >= '0' && *rng_it <= '1' ) ) {
+            while( !is_eof( rng_it )
+                   && ( ( *rng_it >= 'A' && *rng_it <= 'Z' )
+                        || ( *rng_it >= 'a' && *rng_it <= 'z' )
+                        || ( *rng_it >= '0' && *rng_it <= '9' ) )
+                ) {
                 step_iterator( rng_it );
             }
 
@@ -337,7 +341,7 @@ namespace yakkai
     {
         RangedIterator begin = rng_it;
 
-        while( *rng_it >= '0' && *rng_it <= '9' ) {
+        while( !is_eof( rng_it ) && ( *rng_it >= '0' && *rng_it <= '9' ) ) {
             step_iterator( rng_it );
         }
 
@@ -351,7 +355,7 @@ namespace yakkai
     {
         RangedIterator begin = rng_it;
 
-        if ( *rng_it == '+' || *rng_it == '-' ) {
+        if ( !is_eof( rng_it ) && ( *rng_it == '+' || *rng_it == '-' ) ) {
             step_iterator( rng_it );
         }
 
@@ -391,6 +395,7 @@ namespace yakkai
         -> node*
     {
         RangedIterator begin = rng_it;
+        std::string radix, number;
 
         if ( *rng_it == '#' ) {
             step_iterator( rng_it );
@@ -407,7 +412,7 @@ namespace yakkai
                         rng_it = begin;
                         return nullptr;
                     }
-                    std::string base( base_it.it(), rng_it.it() );
+                    radix += std::string( base_it.it(), rng_it.it() );
                 }
             }
             skip_space( rng_it );
@@ -425,17 +430,17 @@ namespace yakkai
                 rng_it = begin;
                 return nullptr;
             }
-            std::string base( base_it.it(), rng_it.it() );
+            number += std::string( base_it.it(), rng_it.it() );
         }
         skip_space( rng_it );
 
         //
-        if ( *rng_it == '.' || *rng_it == 'e' || *rng_it == 'E' ) {
+        if ( !is_eof( rng_it ) && ( *rng_it == '.' || *rng_it == 'e' || *rng_it == 'E' ) ) {
             rng_it = begin;
             return nullptr;
         }
 
-        return make_node<integer_value>( "124" );
+        return make_node<integer_value>( radix, number );
     }
 
 
@@ -448,9 +453,13 @@ namespace yakkai
         -> node*
     {
         RangedIterator begin = rng_it;
+        std::string number, exp;
 
         // sign is optional
         bool const has_sign = parse_sign( rng_it );
+        if ( has_sign ) {
+            number += std::string( begin.it(), rng_it.it() );
+        }
         skip_space( rng_it );
 
 
@@ -461,7 +470,7 @@ namespace yakkai
             if ( parse_digit( rng_it ) ) {
                 skip_space( rng_it );
 
-                std::string base( base_it.it(), rng_it.it() );
+                number += std::string( base_it.it(), rng_it.it() );
                 return true;
             }
 
@@ -475,28 +484,23 @@ namespace yakkai
                 step_iterator( rng_it );
                 skip_space( rng_it );
 
+                number += ".";
                 return true;
             }
             return false;
         }();
-
-        std::cout << "remain: " << std::string( rng_it.it(), rng_it.end() ) << "<" << std::endl;
 
         bool const has_float_number = [&]() mutable {
             if ( has_float_point ) {
                 RangedIterator base_it = rng_it;
                 if ( parse_digit( rng_it ) ) {
                     skip_space( rng_it );
-                    std::string base( base_it.it(), rng_it.it() );
+                    number += std::string( base_it.it(), rng_it.it() );
                     return true;
                 }
             }
             return false;
         }();
-
-        std::cout << "remain: " << std::string( rng_it.it(), rng_it.end() ) << "<" << std::endl;
-        //assert( false );
-
 
         if ( *rng_it == 'e' || *rng_it == 'E' ) {
             if ( has_digit || has_float_number ) {
@@ -509,7 +513,7 @@ namespace yakkai
                         rng_it = begin;
                         return nullptr;
                     }
-                    std::string base( base_it.it(), rng_it.it() );
+                    exp += std::string( base_it.it(), rng_it.it() );
                 }
 
             } else {
@@ -518,7 +522,7 @@ namespace yakkai
             }
         }
 
-        return make_node<float_value>( "124" );
+        return make_node<float_value>( number, exp );
     }
 
 
@@ -540,8 +544,28 @@ namespace yakkai
     }
 
 
+    template<typename RangedIterator>
+    auto parse_atom( RangedIterator& rng_it )
+        -> node*
+    {
+        if ( auto&& s = parse_symbol( rng_it ) ) {
+            return s;
+
+        } else if ( auto&& n = parse_numbers( rng_it ) ) {
+            return n;
+
+        } else {
+            throw "parse error";
+        }
+    }
 
 
+    template<typename RangedIterator>
+    auto parse_token_separate( RangedIterator& rng_it )
+        -> bool
+    {
+        return true;
+    }
 
 
     template<typename RangedIterator>
@@ -643,15 +667,13 @@ namespace yakkai
 
         } else {
             // atom
-            if ( auto&& s = parse_symbol( rng_it ) ) {
-                return s;
+            auto&& a = parse_atom( rng_it );
 
-            } else if ( auto&& n = parse_numbers( rng_it ) ) {
-                return n;
-
-            } else {
+            if ( !parse_token_separate( rng_it ) ) {
                 throw "parse error";
             }
+
+            return a;
         }
     }
 
@@ -719,6 +741,9 @@ int main()
 3
 3.4
 +3.2e10
++0E5
+.0e2
+e3
 )::";
 /* #10 r 10
 # 20 R20

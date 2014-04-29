@@ -2,53 +2,35 @@
 #include <string>
 #include <cassert>
 #include <cctype>
+#include <iterator>
+#include <stdexcept>
 
 
 namespace yakkai
 {
-    template<typename It>
-    auto is_eof( It const& it, It const& end )
-        -> bool
-    {
-        return it == end;
-    }
+
 
     class reached_to_eof : std::exception
     {
     };
 
-    template<typename It>
-    auto expect_not_eof( It const& it, It const& end )
-        -> void
-    {
-        if ( is_eof( it, end ) ) {
-            throw reached_to_eof();
-        }
-    }
 
-    template<typename It>
-    auto step_iterator( It& it, It const& end, std::size_t step = 1 )
-        -> void
-    {
-        expect_not_eof( it, end );
-
-        for( std::size_t i=0; i<step; ++i ) {
-            ++it;
-
-            expect_not_eof( it, end );
-        }
-    };
 
 
     enum struct node_type
     {
-        none,
+        e_none,
 
         // list
             list,
 
         // atom
-            symbol
+            symbol,
+            string,
+            e_integer,
+            e_ratio,
+            e_float,
+            e_complex
             };
 
 
@@ -56,7 +38,7 @@ namespace yakkai
 
 
 
-
+    //
     struct node
     {
         node( node_type t )
@@ -66,10 +48,7 @@ namespace yakkai
         node_type type;
     };
 
-
-
-
-
+    //
     struct cons : public node
     {
         cons()
@@ -80,7 +59,7 @@ namespace yakkai
         node* cdr = nullptr;
     };
 
-
+    //
     struct symbol : public node
     {
         symbol( std::string const& v )
@@ -91,7 +70,28 @@ namespace yakkai
         std::string value;
     };
 
+    //
+    struct integer_value : public node
+    {
+        integer_value( std::string const& v )
+            : node( node_type::e_integer )
+            , value( v )
+            {}
 
+        std::string value;
+    };
+
+
+    //
+    struct float_value : public node
+    {
+        float_value( std::string const& v )
+            : node( node_type::e_float )
+            , value( v )
+            {}
+
+        std::string value;
+    };
 
 
     auto is_nil( node const* const n )
@@ -141,31 +141,13 @@ namespace yakkai
 
 
 
-    auto print_atom( node const* const n, std::size_t indent = 0 )
-        -> void
-    {
-        auto const space = std::string( indent * 2, ' ' );
-
-        if ( is_nil( n ) ) {
-            std::cout << space << "nil" << std::endl;
-            return;
-
-        } else if ( n->type == node_type::symbol ) {
-            auto s = static_cast<symbol const* const>( n );
-            std::cout << space << s->value << std::endl;
-
-        }
-    }
-
-
     auto print2( node const* const n, std::size_t indent = 0 )
         -> void
     {
         auto const space = std::string( indent * 2, ' ' );
 
         if ( is_nil( n ) ) {
-            std::cout << space << "nil" << std::endl;
-            return;
+            std::cout << space << "nil";
 
         } else if ( n->type == node_type::list ) {
 
@@ -182,20 +164,85 @@ namespace yakkai
                 c = static_cast<cons const* const>( c->cdr );
             }
             std::cout << ")";
-            if ( indent == 0 ) {
-                std::cout << std::endl;
-            }
-
-            return;
 
         } else if ( n->type == node_type::symbol ) {
+            auto s = static_cast<symbol const* const>( n );
+            std::cout << s->value;
+
+        } else if ( n->type == node_type::e_integer ) {
+            auto s = static_cast<integer_value const* const>( n );
+            std::cout << s->value;
+
+        } else if ( n->type == node_type::e_float ) {
             auto s = static_cast<symbol const* const>( n );
             std::cout << s->value;
 
         } else {
             std::cout << "!!Unknown!!";
         }
+
+            if ( indent == 0 ) {
+                std::cout << std::endl;
+            }
     }
+
+
+
+    template<typename Iterator>
+    struct ranged_iterator
+    {
+        typedef ranged_iterator                                     self_type;
+        typedef typename std::iterator_traits<Iterator>::value_type value_type;
+
+
+        ranged_iterator( Iterator const& it, Iterator const& end )
+            : it_( it )
+            , end_( end )
+        {}
+
+        auto operator++()
+            -> self_type&
+        {
+            ++it_;
+
+            return *this;
+        }
+
+        auto operator*() const
+            -> value_type const&
+        {
+            if ( it_ == end_ ) throw std::out_of_range( "" );
+
+            return *it_;
+        }
+
+        // comparison
+        friend inline auto operator==( self_type const& lhs, self_type const& rhs )
+            -> bool
+        {
+            return lhs.it_ == rhs.it_;
+        }
+
+        friend inline auto operator!=( self_type const& lhs, self_type const& rhs )
+            -> bool
+        {
+            return !( lhs == rhs );
+        }
+
+        auto it()
+            -> Iterator
+            {
+                return it_;
+            }
+
+        auto end()
+            -> Iterator
+            {
+                return end_;
+            }
+
+        Iterator it_, end_;
+    };
 
 
 
@@ -211,83 +258,332 @@ namespace yakkai
     }
 
 
-    template<typename It>
-    auto skip_space( It& it, It const& end )
+
+
+    template<typename RangedIterator>
+    auto is_eof( RangedIterator const& rng_it )
+        -> bool
+    {
+        return rng_it.it_ == rng_it.end_;
+    }
+
+    template<typename RangedIterator>
+    auto expect_not_eof( RangedIterator const& rng_it )
         -> void
     {
-        expect_not_eof( it, end );
-        while( std::isspace( *it ) ) {
-            step_iterator( it, end );
+        if ( is_eof( rng_it ) ) {
+            throw reached_to_eof();
+        }
+    }
+
+    template<typename RangedIterator>
+    auto step_iterator( RangedIterator& rng_it, std::size_t step = 1 )
+        -> void
+    {
+        expect_not_eof( rng_it );
+
+        for( std::size_t i=0; i<step && !is_eof( rng_it ); ++i ) {
+            ++rng_it;
+        }
+    };
+
+
+
+
+
+
+    template<typename RangedIterator>
+    auto skip_space( RangedIterator& rng_it )
+        -> void
+    {
+        if ( is_eof( rng_it ) ) return;
+
+        //expect_not_eof( it, end );
+        while( std::isspace( *rng_it ) ) {
+            step_iterator( rng_it );
         }
     }
 
 
 
 
-    template<typename It>
-    auto parse_symbol( It& it, It const& end )
+    template<typename RangedIterator>
+    auto parse_symbol( RangedIterator& rng_it )
         -> node*
     {
-        It begin = it;
+        RangedIterator begin = rng_it;
 
-        if ( ( *it >= 'A' && *it <= 'Z' ) || ( *it >= 'a' && *it <= 'z' ) ) {
-            step_iterator( it, end );
+        if ( ( *rng_it >= 'A' && *rng_it <= 'Z' ) || ( *rng_it >= 'a' && *rng_it <= 'z' ) ) {
+            step_iterator( rng_it );
 
-            while( ( *it >= 'A' && *it <= 'Z' )
-                   || ( *it >= 'a' && *it <= 'z' )
-                   || ( *it >= '0' && *it <= '1' ) ) {
-                step_iterator( it, end );
+            while( ( *rng_it >= 'A' && *rng_it <= 'Z' )
+                   || ( *rng_it >= 'a' && *rng_it <= 'z' )
+                   || ( *rng_it >= '0' && *rng_it <= '1' ) ) {
+                step_iterator( rng_it );
             }
 
-            return make_node<symbol>( std::string( begin, it ) );
+            return make_node<symbol>( std::string( begin.it(), rng_it.it() ) );
 
         } else {
-            it = begin;
+            rng_it = begin;
             return nullptr;
         }
     }
 
 
-    template<typename It>
-    auto parse_closer_s_expression( It& it, It const& end, node* n = nullptr )
+    template<typename RangedIterator>
+    auto parse_digit( RangedIterator& rng_it )
+        -> bool
+    {
+        RangedIterator begin = rng_it;
+
+        while( *rng_it >= '0' && *rng_it <= '9' ) {
+            step_iterator( rng_it );
+        }
+
+        // return true if digits are parsed
+        return begin != rng_it;
+    }
+
+    template<typename RangedIterator>
+    auto parse_sign( RangedIterator& rng_it )
+        -> bool
+    {
+        RangedIterator begin = rng_it;
+
+        if ( *rng_it == '+' || *rng_it == '-' ) {
+            step_iterator( rng_it );
+        }
+
+        // return true if digits are parsed
+        return begin != rng_it;
+    }
+
+
+
+    template<typename RangedIterator>
+    auto parse_digit_with_sign( RangedIterator& rng_it )
+        -> bool
+    {
+        RangedIterator begin = rng_it;
+
+        // sign is optional
+        parse_sign( rng_it );
+
+        skip_space( rng_it );
+
+        //
+        if ( parse_digit( rng_it ) ) {
+            return true;
+
+        } else {
+            rng_it = begin;
+            return false;
+        }
+    }
+
+
+
+
+
+    template<typename RangedIterator>
+    auto parse_integer( RangedIterator& rng_it )
         -> node*
     {
-        if ( *it != ')' ) {
+        RangedIterator begin = rng_it;
+
+        if ( *rng_it == '#' ) {
+            step_iterator( rng_it );
+            skip_space( rng_it );
+
+            if ( *rng_it == 'x' ) {
+                //
+
+            } else {
+                // base spacified by number
+                {
+                    RangedIterator base_it = rng_it;
+                    if ( !parse_digit( rng_it ) ) {
+                        rng_it = begin;
+                        return nullptr;
+                    }
+                    std::string base( base_it.it(), rng_it.it() );
+                }
+            }
+            skip_space( rng_it );
+
+            if ( *rng_it == 'r' || *rng_it == 'R' ) {
+                rng_it = begin;
+                return nullptr;
+            }
+        }
+        skip_space( rng_it );
+
+        {
+            RangedIterator base_it = rng_it;
+            if ( !parse_digit_with_sign( rng_it ) ) {
+                rng_it = begin;
+                return nullptr;
+            }
+            std::string base( base_it.it(), rng_it.it() );
+        }
+        skip_space( rng_it );
+
+        //
+        if ( *rng_it == '.' || *rng_it == 'e' || *rng_it == 'E' ) {
+            rng_it = begin;
+            return nullptr;
+        }
+
+        return make_node<integer_value>( "124" );
+    }
+
+
+    // 0.0
+    // .0
+    // .0e10
+    // (+|-) (digit*)? (.)? digit+ ( (e|E) (+|-) digit+ )?
+    template<typename RangedIterator>
+    auto parse_float( RangedIterator& rng_it )
+        -> node*
+    {
+        RangedIterator begin = rng_it;
+
+        // sign is optional
+        bool const has_sign = parse_sign( rng_it );
+        skip_space( rng_it );
+
+
+
+        //
+        bool const has_digit = [&]() mutable {
+            RangedIterator base_it = rng_it;
+            if ( parse_digit( rng_it ) ) {
+                skip_space( rng_it );
+
+                std::string base( base_it.it(), rng_it.it() );
+                return true;
+            }
+
+            return false;
+        }();
+
+
+        //
+        bool const has_float_point = [&]() mutable {
+            if ( *rng_it == '.' ) {
+                step_iterator( rng_it );
+                skip_space( rng_it );
+
+                return true;
+            }
+            return false;
+        }();
+
+        std::cout << "remain: " << std::string( rng_it.it(), rng_it.end() ) << "<" << std::endl;
+
+        bool const has_float_number = [&]() mutable {
+            if ( has_float_point ) {
+                RangedIterator base_it = rng_it;
+                if ( parse_digit( rng_it ) ) {
+                    skip_space( rng_it );
+                    std::string base( base_it.it(), rng_it.it() );
+                    return true;
+                }
+            }
+            return false;
+        }();
+
+        std::cout << "remain: " << std::string( rng_it.it(), rng_it.end() ) << "<" << std::endl;
+        //assert( false );
+
+
+        if ( *rng_it == 'e' || *rng_it == 'E' ) {
+            if ( has_digit || has_float_number ) {
+                step_iterator( rng_it );
+                skip_space( rng_it );
+
+                {
+                    RangedIterator base_it = rng_it;
+                    if ( !parse_digit_with_sign( rng_it ) ) {
+                        rng_it = begin;
+                        return nullptr;
+                    }
+                    std::string base( base_it.it(), rng_it.it() );
+                }
+
+            } else {
+                rng_it = begin;
+                return nullptr;
+            }
+        }
+
+        return make_node<float_value>( "124" );
+    }
+
+
+
+
+    template<typename RangedIterator>
+    auto parse_numbers( RangedIterator& rng_it )
+        -> node*
+    {
+        if ( node* i = parse_integer( rng_it ) ) {
+            return i;
+
+        } else if ( node* f = parse_float( rng_it ) ) {
+            return f;
+
+        } else {
+            return nullptr;
+        }
+    }
+
+
+
+
+
+
+    template<typename RangedIterator>
+    auto parse_closer_s_expression( RangedIterator& rng_it, node* n = nullptr )
+        -> node*
+    {
+        if ( *rng_it != ')' ) {
             assert( false );
         }
-        step_iterator( it, end );
+        step_iterator( rng_it );
 
         return n;
     }
 
 
-    template<typename It>
-    auto parse_s_expression( It& it, It const& end, bool = false )
+    template<typename RangedIterator>
+    auto parse_s_expression( RangedIterator&, bool const = false )
         -> node*;
-    template<typename It>
-    auto parse_s_expression( It& it, It const& end, cons* outer_cell, bool = false )
+    template<typename RangedIterator>
+    auto parse_s_expression( RangedIterator&, cons*, bool const = false )
         -> cons*;
 
 
-    template<typename It>
-    auto parse_s_expression_or_closer( It& it, It const& end )
+    template<typename RangedIterator>
+    auto parse_s_expression_or_closer( RangedIterator& rng_it )
         -> node*
     {
-        return parse_s_expression( it, end, true );
+        return parse_s_expression( rng_it, true );
     }
-    template<typename It>
-    auto parse_s_expression_or_closer( It& it, It const& end, cons* outer_cell )
+    template<typename RangedIterator>
+    auto parse_s_expression_or_closer( RangedIterator& rng_it, cons* outer_cell )
         -> cons*
     {
-        return parse_s_expression( it, end, outer_cell, true );
+        return parse_s_expression( rng_it, outer_cell, true );
     }
 
 
-    template<typename It>
-    auto parse_s_expression( It& it, It const& end, cons* outer_cell, bool is_enable_closer )
+    template<typename RangedIterator>
+    auto parse_s_expression( RangedIterator& rng_it, cons* outer_cell, bool const is_enable_closer )
         -> cons*
     {
-        auto s = parse_s_expression( it, end, is_enable_closer );
+        auto s = parse_s_expression( rng_it, is_enable_closer );
 
         //
         if ( s == nullptr ) {
@@ -306,17 +602,18 @@ namespace yakkai
     }
 
 
-    template<typename It>
-    auto parse_s_expression( It& it, It const& end, bool is_enable_closer )
+    template<typename RangedIterator>
+    auto parse_s_expression( RangedIterator& rng_it, bool const is_enable_closer )
         -> node*
     {
-        skip_space( it, end );
+        skip_space( rng_it );
+        expect_not_eof( rng_it );
 
-        if ( *it == '(' ) {
-            step_iterator( it, end );
+        if ( *rng_it == '(' ) {
+            step_iterator( rng_it );
 
             // car
-            auto s = parse_s_expression_or_closer( it, end );
+            auto s = parse_s_expression_or_closer( rng_it );
             if ( s == nullptr ) {
                 return nullptr;
             }
@@ -325,29 +622,32 @@ namespace yakkai
             auto cell = make_node<cons>();
             cell->car = s;
 
-            skip_space( it, end );
-            if ( *it == '.' ) {
+            skip_space( rng_it );
+            if ( *rng_it == '.' ) {
                 // cons cell
-                step_iterator( it, end );
+                step_iterator( rng_it );
 
-                auto s = parse_s_expression( it, end, cell );
-                return parse_closer_s_expression( it, end, cell );
+                auto s = parse_s_expression( rng_it, cell );
+                return parse_closer_s_expression( rng_it, cell );
 
             } else {
                 // list
                 auto last_cell = cell;
-                while( last_cell = parse_s_expression_or_closer( it, end, last_cell ) );
+                while( last_cell = parse_s_expression_or_closer( rng_it, last_cell ) );
 
                 return cell;
             }
 
-        } else if ( is_enable_closer &&  *it == ')' ) {
-            return parse_closer_s_expression( it, end );
+        } else if ( is_enable_closer &&  *rng_it == ')' ) {
+            return parse_closer_s_expression( rng_it );
 
         } else {
             // atom
-            if ( auto&& s = parse_symbol( it, end ) ) {
+            if ( auto&& s = parse_symbol( rng_it ) ) {
                 return s;
+
+            } else if ( auto&& n = parse_numbers( rng_it ) ) {
+                return n;
 
             } else {
                 throw "parse error";
@@ -357,11 +657,11 @@ namespace yakkai
 
 
 
-    template<typename It>
-    auto parse_program( It& it, It const& end )
+    template<typename RangedIterator>
+    auto parse_program( RangedIterator& rng_it )
         -> node*
     {
-        parse_s_expression( it, end );
+        parse_s_expression( rng_it );
     }
 
 
@@ -378,12 +678,13 @@ namespace yakkai
     auto eval( std::string const& source )
         -> void
     {
-        auto it = source.cbegin();
-        auto const end = source.cend();
+        auto rng_it = ranged_iterator<std::string::const_iterator>( source.cbegin(), source.cend() );
+
+
 
         try {
             for (;;) {
-                auto s = parse_program( it, end );
+                auto s = parse_program( rng_it );
 
                 std::cout << "Result: " << std::endl;
                 print2( s );
@@ -392,9 +693,10 @@ namespace yakkai
         } catch( char const* const message ) {
             std::cout << "exception!: " << message << std::endl;
         } catch( reached_to_eof const& e ) {
+            std::cout << "reached to eof" << std::endl;
         }
 
-        std::cout << "rest: " << std::string( it, end ) << std::endl;
+        std::cout << "rest: " << std::string( rng_it.it(), rng_it.end() ) << std::endl;
 
 
     }
@@ -411,9 +713,18 @@ int main()
 (list (quote a) (quote b) abc)
 (a . b)
 ()
-
+(add 1 2 3 4)
+1
+2
+3
+3.4
++3.2e10
 )::";
-
+/* #10 r 10
+# 20 R20
+3/10
+#10r10/3
+*/
     std::cout << test_case << std::endl;
 
 

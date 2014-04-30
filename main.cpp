@@ -548,10 +548,10 @@ namespace yakkai
     auto parse_atom( RangedIterator& rng_it )
         -> node*
     {
-        if ( auto&& s = parse_symbol( rng_it ) ) {
+        if ( auto s = parse_symbol( rng_it ) ) {
             return s;
 
-        } else if ( auto&& n = parse_numbers( rng_it ) ) {
+        } else if ( auto n = parse_numbers( rng_it ) ) {
             return n;
 
         } else {
@@ -651,13 +651,15 @@ namespace yakkai
                 // cons cell
                 step_iterator( rng_it );
 
-                auto s = parse_s_expression( rng_it, cell );
+                parse_s_expression( rng_it, cell );
                 return parse_closer_s_expression( rng_it, cell );
 
             } else {
                 // list
                 auto last_cell = cell;
-                while( last_cell = parse_s_expression_or_closer( rng_it, last_cell ) );
+                while( auto&& v = parse_s_expression_or_closer( rng_it, last_cell ) ) {
+                    last_cell = v;
+                }
 
                 return cell;
             }
@@ -667,7 +669,7 @@ namespace yakkai
 
         } else {
             // atom
-            auto&& a = parse_atom( rng_it );
+            auto a = parse_atom( rng_it );
 
             if ( !parse_token_separate( rng_it ) ) {
                 throw "parse error";
@@ -683,7 +685,7 @@ namespace yakkai
     auto parse_program( RangedIterator& rng_it )
         -> node*
     {
-        parse_s_expression( rng_it );
+        return parse_s_expression( rng_it );
     }
 
 
@@ -710,6 +712,7 @@ namespace yakkai
 
                 std::cout << "Result: " << std::endl;
                 print2( s );
+                std::cout << std::endl;
             }
 
         } catch( char const* const message ) {

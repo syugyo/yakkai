@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <map>
+#include <memory>
 #include <cassert>
 #include <cctype>
 #include <iterator>
@@ -8,7 +10,11 @@
 
 namespace yakkai
 {
-
+    // forward
+    namespace interpreter
+    {
+        class scope;
+    }
 
     class reached_to_eof : std::exception
     {
@@ -22,16 +28,16 @@ namespace yakkai
         e_none,
 
         // list
-            list,
+        e_list,
 
         // atom
-            symbol,
-            string,
-            e_integer,
-            e_ratio,
-            e_float,
-            e_complex
-            };
+        e_symbol,
+        e_string,
+        e_integer,
+        e_ratio,
+        e_float,
+        e_complex
+    };
 
 
 
@@ -52,34 +58,57 @@ namespace yakkai
     struct cons : public node
     {
         cons()
-            : node( node_type::list )
+            : node( node_type::e_list )
             {}
 
         node* car = nullptr;
         node* cdr = nullptr;
     };
 
+    enum class symbol_type
+    {
+        e_none,
+        e_function,
+        e_native_function
+    };
+
     //
     struct symbol : public node
     {
-        symbol( std::string const& v )
-            : node( node_type::symbol )
+        symbol( std::string const& v, symbol_type const& t = symbol_type::e_none )
+            : node( node_type::e_symbol )
             , value( v )
-            {}
+            , sym_type( t )
+        {}
 
         std::string value;
+        symbol_type sym_type;
     };
+
+
+    //
+    struct native_function_symbol : public symbol
+    {
+        explicit native_function_symbol( std::function<node* (node*, std::shared_ptr<interpreter::scope> const&)> const& f )
+            : symbol( "native_symbol", symbol_type::e_native_function )
+            , f_( f )
+            {}
+
+        std::function<node* (node*, std::shared_ptr<interpreter::scope> const&)> f_;
+    };
+
+
+
 
     //
     struct integer_value : public node
     {
-        integer_value( std::string const& radix, std::string number )
+        integer_value( long long int const& v )
             : node( node_type::e_integer )
-            , radix( radix )
-            , number( number )
-            {}
+            , value( v )
+        {}
 
-        std::string radix, number;
+        long long int value;
     };
 
 
@@ -90,9 +119,10 @@ namespace yakkai
             : node( node_type::e_float )
             , number( number )
             , exp( exp )
-            {}
+        {}
 
         std::string number, exp;
+        double value;
     };
 
 
@@ -102,12 +132,88 @@ namespace yakkai
         if ( n == nullptr ) {
             return true;
 
-        } else if ( n->type == node_type::list ) {
+        } else if ( n->type == node_type::e_list ) {
             return is_nil( static_cast<cons const* const>( n )->car );
 
         } else {
             return false;
         }
+    }
+
+    auto is_list( node const* const n )
+        -> bool
+    {
+        if ( n == nullptr ) {
+            return true;
+
+        } else if ( n->type == node_type::e_list ) {
+            return true;
+
+        } else {
+            return false;
+        }
+    }
+
+    auto is_symbol( node const* const n )
+        -> bool
+    {
+        if ( n == nullptr ) {
+            return false;
+
+        } else if ( n->type == node_type::e_symbol ) {
+            return true;
+
+        } else {
+            return false;
+        }
+    }
+
+    auto is_integer( node const* const n )
+        -> bool
+    {
+        if ( n == nullptr ) {
+            return false;
+
+        } else if ( n->type == node_type::e_integer ) {
+            return true;
+
+        } else {
+            return false;
+        }
+    }
+
+    auto is_float( node const* const n )
+        -> bool
+    {
+        if ( n == nullptr ) {
+            return false;
+
+        } else if ( n->type == node_type::e_float ) {
+            return true;
+
+        } else {
+            return false;
+        }
+    }
+
+    auto is_function_symbol( node const* const s )
+        -> bool
+    {
+        if ( !is_symbol( s ) ) return false;
+        return static_cast<symbol const* const>( s )->sym_type == symbol_type::e_function;
+    }
+
+    auto is_native_function_symbol( node const* const s )
+        -> bool
+    {
+        if ( !is_symbol( s ) ) return false;
+        return static_cast<symbol const* const>( s )->sym_type == symbol_type::e_native_function;
+    }
+
+    auto is_callable_symbol( node const* const s )
+        -> bool
+    {
+        return is_function_symbol( s ) || is_native_function_symbol( s );
     }
 
 
@@ -121,7 +227,7 @@ namespace yakkai
             std::cout << space << "nil" << std::endl;
             return;
 
-        } else if ( n->type == node_type::list ) {
+        } else if ( n->type == node_type::e_list ) {
             auto c = static_cast<cons const* const>( n );
             std::cout << space << "( " << std::endl;
             print( c->car, indent + 1 );
@@ -129,7 +235,7 @@ namespace yakkai
             print( c->cdr, indent + 1 );
             std::cout << space << ")" << std::endl;
 
-        } else if ( n->type == node_type::symbol ) {
+        } else if ( n->type == node_type::e_symbol ) {
             auto s = static_cast<symbol const* const>( n );
             std::cout << space << s->value << std::endl;
 
@@ -151,7 +257,7 @@ namespace yakkai
         if ( is_nil( n ) ) {
             std::cout << space << "nil";
 
-        } else if ( n->type == node_type::list ) {
+        } else if ( n->type == node_type::e_list ) {
 
             std::cout << "( ";
             auto c = static_cast<cons const* const>( n );
@@ -162,18 +268,18 @@ namespace yakkai
                     break;
                 }
 
-                assert( c->cdr->type == node_type::list );
+                assert( c->cdr->type == node_type::e_list );
                 c = static_cast<cons const* const>( c->cdr );
             }
-            std::cout << "): list";
+            std::cout << "): e_list";
 
-        } else if ( n->type == node_type::symbol ) {
+        } else if ( n->type == node_type::e_symbol ) {
             auto s = static_cast<symbol const* const>( n );
             std::cout << s->value << ": symbol";
 
         } else if ( n->type == node_type::e_integer ) {
             auto s = static_cast<integer_value const* const>( n );
-            std::cout << s->number << "(" << s->radix << "): int";
+            std::cout << s->value << ": int";
 
         } else if ( n->type == node_type::e_float ) {
             auto s = static_cast<float_value const* const>( n );
@@ -183,9 +289,9 @@ namespace yakkai
             std::cout << "!!Unknown!!";
         }
 
-            if ( indent == 0 ) {
-                std::cout << std::endl;
-            }
+        if ( indent == 0 ) {
+            std::cout << std::endl;
+        }
     }
 
 
@@ -233,15 +339,15 @@ namespace yakkai
 
         auto it()
             -> Iterator
-            {
-                return it_;
-            }
+        {
+            return it_;
+        }
 
         auto end()
             -> Iterator
-            {
-                return end_;
-            }
+        {
+            return end_;
+        }
 
         Iterator it_, end_;
     };
@@ -395,7 +501,8 @@ namespace yakkai
         -> node*
     {
         RangedIterator begin = rng_it;
-        std::string radix, number;
+        int radix = 10;
+        long long number = 0;
 
         if ( *rng_it == '#' ) {
             step_iterator( rng_it );
@@ -412,7 +519,7 @@ namespace yakkai
                         rng_it = begin;
                         return nullptr;
                     }
-                    radix += std::string( base_it.it(), rng_it.it() );
+                    radix = std::stoi( std::string( base_it.it(), rng_it.it() ) );
                 }
             }
             skip_space( rng_it );
@@ -430,7 +537,7 @@ namespace yakkai
                 rng_it = begin;
                 return nullptr;
             }
-            number += std::string( base_it.it(), rng_it.it() );
+            number = std::stoll( std::string( base_it.it(), rng_it.it() ), nullptr, radix );
         }
         skip_space( rng_it );
 
@@ -440,7 +547,7 @@ namespace yakkai
             return nullptr;
         }
 
-        return make_node<integer_value>( radix, number );
+        return make_node<integer_value>( number );
     }
 
 
@@ -462,8 +569,6 @@ namespace yakkai
         }
         skip_space( rng_it );
 
-
-
         //
         bool const has_digit = [&]() mutable {
             RangedIterator base_it = rng_it;
@@ -476,7 +581,6 @@ namespace yakkai
 
             return false;
         }();
-
 
         //
         bool const has_float_point = [&]() mutable {
@@ -655,7 +759,7 @@ namespace yakkai
                 return parse_closer_s_expression( rng_it, cell );
 
             } else {
-                // list
+                // e_list
                 auto last_cell = cell;
                 while( auto&& v = parse_s_expression_or_closer( rng_it, last_cell ) ) {
                     last_cell = v;
@@ -693,38 +797,289 @@ namespace yakkai
 
 
 
-
-
-
-
-
-
-    auto eval( std::string const& source )
-        -> void
+    enum class error_code
     {
-        auto rng_it = ranged_iterator<std::string::const_iterator>( source.cbegin(), source.cend() );
+        none,
+        unexpected
+    };
 
-
+    template<typename T>
+    auto parse_one_expression( ranged_iterator<T>& rng_it, error_code& ec )
+        -> node*
+    {
+        ec = error_code::none;
 
         try {
-            for (;;) {
-                auto s = parse_program( rng_it );
-
-                std::cout << "Result: " << std::endl;
-                print2( s );
-                std::cout << std::endl;
-            }
+            return parse_program( rng_it );
 
         } catch( char const* const message ) {
             std::cout << "exception!: " << message << std::endl;
+
         } catch( reached_to_eof const& e ) {
             std::cout << "reached to eof" << std::endl;
         }
 
-        std::cout << "rest: " << std::string( rng_it.it(), rng_it.end() ) << std::endl;
-
-
+        ec = error_code::unexpected;
+        return nullptr;
     }
+
+
+
+
+    namespace interpreter
+    {
+        class scope
+            : public std::enable_shared_from_this<scope>
+        {
+        public:
+            scope() = default;
+
+            scope( std::weak_ptr<scope> const& p )
+                : parent_( p )
+            {}
+
+        public:
+            auto def_symbol( std::string const& name, node* const n )
+                -> node*
+            {
+                environment_[name] = std::make_pair( n, nullptr );
+            }
+
+            auto get_node_at( std::string const& name )
+                -> node*
+            {
+                return std::get<0>( environment_.at( name ) );
+            }
+
+            auto get_scope_at( std::string const& name )
+                -> std::shared_ptr<scope>
+            {
+                return std::get<1>( environment_.at( name ) );
+            }
+
+        public:
+            auto has_parent() const
+                -> bool
+            {
+                return !parent_.expired();
+            }
+
+            auto find( std::string const& name )
+                -> std::pair<node*, std::shared_ptr<scope>>
+            {
+                auto&& it = environment_.find( name );
+                if ( it != environment_.cend() ) return it->second;
+
+                if ( has_parent() ) return parent_.lock()->find( name );
+
+                return std::make_pair( nullptr, nullptr );
+            }
+
+            auto find_node( std::string const& name )
+                -> node*
+            {
+                return std::get<0>( find( name ) );
+            }
+
+            auto find_scope( std::string const& name )
+                -> std::shared_ptr<scope>
+            {
+                return std::get<1>( find( name ) );
+            }
+
+        public:
+            auto make_inner_scope()
+                -> std::shared_ptr<scope>
+            {
+                return std::make_shared<scope>( shared_from_this() );
+            }
+
+        private:
+            std::weak_ptr<scope> parent_;
+            std::map<std::string, std::pair<node*, std::shared_ptr<scope>>> environment_;
+        };
+
+
+        auto as_node( std::pair<node*, std::shared_ptr<scope>> const& p )
+            -> node*
+        {
+            return std::get<0>( p );
+        }
+
+        auto as_scope( std::pair<node*, std::shared_ptr<scope>> const& p )
+            -> std::shared_ptr<scope> const&
+        {
+            return std::get<1>( p );
+        }
+
+
+        class machine
+        {
+        public:
+            machine()
+                : scope_( std::make_shared<scope>() )
+            {
+                using namespace std::placeholders;
+
+                //
+                def_global_native_function( "add", std::bind( &machine::add, this, _1, _2 ) );
+            }
+
+            auto eval( node* const n )
+                -> node*
+            {
+                return eval( n, scope_ );
+            }
+
+            auto eval( node* const n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                if ( is_nil( n ) ) {
+                    return nullptr;
+
+                } else if ( n->type == node_type::e_list ) {
+                    auto c = static_cast<cons* const>( n );
+                    if ( is_symbol( c->car ) ) {
+                        // try to function call
+                        return function_call( c, current_scope );
+                    }
+                }
+
+                return n;
+            }
+
+        public:
+            template<typename F>
+            auto def_global_native_function( std::string const& name, F&& f )
+                -> node*
+            {
+                scope_->def_symbol( name, make_node<native_function_symbol>( std::forward<F>( f ) ) );
+            }
+
+        private:
+            auto function_call( cons* const c, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                assert( is_symbol( c->car ) );
+                auto s = static_cast<symbol* const>( c->car );
+
+                // check special function
+                // if ( is_special_form() ) {
+                // else {
+                // check is callable?
+                {
+                    // look up symbol
+                    auto&& p = current_scope->find( s->value );
+                    if ( std::get<0>( p ) == nullptr ) {
+                        std::cout << "error!!" << std::endl;
+                        assert( false );
+                    }
+
+                    //
+                    auto&& target_node = as_node( p );
+
+                    //
+                    if ( is_native_function_symbol( target_node ) ) {
+                        auto&& ns = static_cast<native_function_symbol const* const>( target_node );
+                        assert( ns->f_ != nullptr );
+
+                        // call native function
+                        return (ns->f_)( c->cdr, current_scope );
+
+                    } else {
+                        //
+                        auto&& new_scope = as_scope( p )->make_inner_scope();
+                        std::cout << "not supported" << std::endl;
+                    }
+                }
+
+                assert( false );
+                return nullptr;
+            }
+
+        private:
+            auto add( node* n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                assert( is_list( n ) );
+
+                node_type nt = node_type::e_integer;
+                double result = 0.0;
+
+                cons const* t = static_cast<cons const* const>( n );
+                while( !is_nil( t ) ) {
+                    auto&& v = eval( t->car );
+
+                    if ( is_integer( v ) ) {
+                        auto&& typed_val = static_cast<integer_value const* const>( v );
+                        result += typed_val->value;
+
+                    } else if ( is_float( v ) ) {
+                        auto&& typed_val = static_cast<float_value const* const>( v );
+                        assert( false );
+
+                    } else {
+                        // type error
+                        assert( false );
+                    }
+
+                    assert( is_list( t->cdr ) );
+                    t = static_cast<cons const* const>( t->cdr );
+                }
+
+                std::cout << "Hellooo: " << result << " / " << (int)nt << std::endl;
+
+                return [&]() -> node* {
+                    if ( nt == node_type::e_integer ) {
+                         return make_node<integer_value>( result );
+
+                    } else if ( nt == node_type::e_float ) {
+                        assert( false );
+                    }
+
+                    assert( false );
+                    return nullptr;
+                }();
+            }
+
+        private:
+            std::shared_ptr<scope> scope_;
+        };
+    } // namespace
+
+
+
+
+
+
+    auto eval_source_code( std::string const& source )
+        -> void
+    {
+        auto rng_it = ranged_iterator<std::string::const_iterator>( source.cbegin(), source.cend() );
+
+        error_code ec;
+        interpreter::machine m;
+
+        //
+        for (;;) {
+            auto s = parse_one_expression( rng_it, ec );
+
+            std::cout << "Result: " << std::endl;
+            print2( s );
+            std::cout << std::endl;
+
+            if ( ec == error_code::none ) {
+                //
+                print2( m.eval( s ) );
+            }
+
+
+            if ( rng_it.it() == rng_it.end() ) {
+                break;
+            }
+        }
+    }
+
 } // namespace yakkai
 
 
@@ -735,10 +1090,10 @@ namespace yakkai
 int main()
 {
     std::string const test_case = R"::(
+(add 1 2 3 4)
 (list (quote a) (quote b) abc)
 (a . b)
 ()
-(add 1 2 3 4)
 1
 2
 3
@@ -747,6 +1102,7 @@ int main()
 +0E5
 .0e2
 e3
+nil
 )::";
 /* #10 r 10
 # 20 R20
@@ -756,5 +1112,5 @@ e3
     std::cout << test_case << std::endl;
 
 
-    yakkai::eval( test_case );
+    yakkai::eval_source_code( test_case );
 }

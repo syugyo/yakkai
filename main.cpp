@@ -1856,9 +1856,9 @@ void test( yakkai::interpreter::gc& g )
         }
 
         void f() const
-            { std::cout << "f: " << ababa[0] << std::endl; }
-
-
+        {
+            std::cout << "f: " << ababa[0] << std::endl;
+        }
     };
 
     A* p = nullptr;

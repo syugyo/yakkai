@@ -1544,6 +1544,7 @@ namespace yakkai
                 //
                 def_global_native_function( "deffun", std::bind( &machine::define_function, this, _1, _2, _3 ) );
                 def_global_native_function( "add", std::bind( &machine::add, this, _1, _2, _3 ) );
+                def_global_native_function( "if" , std::bind( &machine::add, this, _1, _2, _3 ) );
             }
 
         public:

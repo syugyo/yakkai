@@ -4,7 +4,6 @@
 #include <memory>
 #include <cassert>
 #include <cctype>
-#include <csetjmp>
 #include <iterator>
 #include <stdexcept>
 #include <limits>
@@ -13,6 +12,8 @@
 #include <vector>
 #include <algorithm>
 #include <typeindex>
+#include <array>
+
 
 namespace yakkai
 {
@@ -25,8 +26,6 @@ namespace yakkai
     class reached_to_eof : std::exception
     {
     };
-
-
 
 
     enum struct node_type
@@ -1223,7 +1222,7 @@ namespace yakkai
             auto find_free_block_index() const
                 -> std::size_t
             {
-                constexpr auto test8 = []( std::uint8_t const& n ) -> std::size_t {
+                auto const test8 = []( std::uint8_t const& n ) -> std::size_t {
                     for( int i=0; i<8; ++i ) {
                         if ( ( n & ( 1 << ( 8 - i - 1 ) ) ) == 0 ) return i;
                     }
@@ -1231,7 +1230,7 @@ namespace yakkai
                     assert( false );
                 };
 
-                constexpr auto test16 = []( std::uint16_t const& n ) -> std::size_t {
+                auto const test16 = [&test8]( std::uint16_t const& n ) -> std::size_t {
                     std::uint8_t const h = ( n & 0xff00 ) >> 8;
                     if ( h != std::numeric_limits<std::uint8_t>::max() ) {
                         return 8 * 0 + test8( h );
@@ -1245,7 +1244,7 @@ namespace yakkai
                     assert( false );
                 };
 
-                constexpr auto test32 = []( std::uint32_t const& n ) -> std::size_t {
+                auto const test32 = [&test16]( std::uint32_t const& n ) -> std::size_t {
                     std::uint16_t const h = ( n & 0xffff0000 ) >> 16;
                     if ( h != std::numeric_limits<std::uint16_t>::max() ) {
                         return 16 * 0 + test16( h );
@@ -1369,10 +1368,8 @@ namespace yakkai
                 prepare_page<T>( block_size );
 
                 {
-                    auto&& p = try_to_allocate<T>( block_size, std::forward<Args>( args )... );
-
-                    // Succeeded!
-                    if ( p != nullptr ) return p;
+                    auto p = try_to_allocate<T>( block_size, std::forward<Args>( args )... );
+                    if ( p != nullptr ) return p;   // Succeeded!
                 }
 
                 // if reached to this flow, page table is full. So run Garbage collector!
@@ -1383,8 +1380,8 @@ namespace yakkai
 
                 // retry
                 {
-                    auto&& p = try_to_allocate<T>( block_size, std::forward<Args>( args )... );
-                    if ( p != nullptr ) return p;
+                    auto p = try_to_allocate<T>( block_size, std::forward<Args>( args )... );
+                    if ( p != nullptr ) return p;   // Succeeded!
                 }
 
                 // if reached to this flow, totally failed...

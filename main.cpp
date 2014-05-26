@@ -38,6 +38,8 @@ namespace yakkai
 
         // atom
         e_symbol,
+        e_native_function,
+        e_keyword,
         e_string,
         e_integer,
         e_ratio,
@@ -46,19 +48,33 @@ namespace yakkai
     };
 
 
-
+    enum class node_attribute
+    {
+        e_none,
+        e_callable
+    };
 
 
 
     //
     struct node
     {
-        node( node_type t )
+        node( node_type const& t, node_attribute const& a = node_attribute::e_none )
             : type( t )
+            , attr( a )
             {}
 
+        auto set_attribute( node_attribute const& a )
+            -> void
+        {
+            attr = a;
+        }
+
         node_type type;
+        node_attribute attr;
     };
+
+
 
     //
     struct cons : public node
@@ -71,38 +87,44 @@ namespace yakkai
         node* cdr = nullptr;
     };
 
-    enum class symbol_type
-    {
-        e_none,
-        e_function,
-        e_native_function
-    };
-
     //
     struct symbol : public node
     {
-        symbol( std::string const& v, symbol_type const& t = symbol_type::e_none )
+        symbol( std::string const& v )
             : node( node_type::e_symbol )
             , value( v )
-            , sym_type( t )
         {}
 
         std::string value;
-        symbol_type sym_type;
     };
 
 
     //
-    struct native_function_symbol : public symbol
+    struct native_function : public node
     {
-        explicit native_function_symbol( std::function<node* (node*, std::shared_ptr<interpreter::scope> const&)> const& f )
-            : symbol( "native_symbol", symbol_type::e_native_function )
-            , f_( f )
-            {}
+        using func_type = std::function<
+            node* (cons const* const, std::shared_ptr<interpreter::scope> const&, std::shared_ptr<interpreter::scope> const&)
+            >;
 
-        std::function<node* (node*, std::shared_ptr<interpreter::scope> const&)> f_;
+        explicit native_function( func_type const& f )
+            : node( node_type::e_native_function, node_attribute::e_callable )
+            , f_( f )
+        {}
+
+        func_type f_;
     };
 
+
+
+    struct keyword : public node
+    {
+        keyword( std::string const& v )
+            : node( node_type::e_keyword )
+            , value( v )
+        {}
+
+        std::string value;
+    };
 
 
 
@@ -149,7 +171,7 @@ namespace yakkai
     auto is_list( node const* const n )
         -> bool
     {
-        if ( n == nullptr ) {
+        if ( is_nil( n ) ) {
             return true;
 
         } else if ( n->type == node_type::e_list ) {
@@ -163,7 +185,7 @@ namespace yakkai
     auto is_symbol( node const* const n )
         -> bool
     {
-        if ( n == nullptr ) {
+        if ( is_nil( n ) ) {
             return false;
 
         } else if ( n->type == node_type::e_symbol ) {
@@ -174,10 +196,38 @@ namespace yakkai
         }
     }
 
+    auto is_keyword( node const* const n )
+        -> bool
+    {
+        if ( is_nil( n ) ) {
+            return false;
+
+        } else if ( n->type == node_type::e_keyword ) {
+            return true;
+
+        } else {
+            return false;
+        }
+    }
+
+    auto is_native_function( node const* const n )
+        -> bool
+    {
+        if ( is_nil( n ) ) {
+            return false;
+
+        } else if ( n->type == node_type::e_native_function ) {
+            return true;
+
+        } else {
+            return false;
+        }
+    }
+
     auto is_integer( node const* const n )
         -> bool
     {
-        if ( n == nullptr ) {
+        if ( is_nil( n ) ) {
             return false;
 
         } else if ( n->type == node_type::e_integer ) {
@@ -191,7 +241,7 @@ namespace yakkai
     auto is_float( node const* const n )
         -> bool
     {
-        if ( n == nullptr ) {
+        if ( is_nil( n ) ) {
             return false;
 
         } else if ( n->type == node_type::e_float ) {
@@ -202,26 +252,14 @@ namespace yakkai
         }
     }
 
-    auto is_function_symbol( node const* const s )
+
+    auto is_callable( node const* const n )
         -> bool
     {
-        if ( !is_symbol( s ) ) return false;
-        return static_cast<symbol const* const>( s )->sym_type == symbol_type::e_function;
-    }
+        if ( is_nil( n ) ) return false;
 
-    auto is_native_function_symbol( node const* const s )
-        -> bool
-    {
-        if ( !is_symbol( s ) ) return false;
-        return static_cast<symbol const* const>( s )->sym_type == symbol_type::e_native_function;
+        return n->attr == node_attribute::e_callable;
     }
-
-    auto is_callable_symbol( node const* const s )
-        -> bool
-    {
-        return is_function_symbol( s ) || is_native_function_symbol( s );
-    }
-
 
 #if 0
     auto print( node const* const n, std::size_t indent = 0 )
@@ -448,6 +486,30 @@ namespace yakkai
         }
     }
 
+    template<typename RangedIterator>
+    auto parse_keyword( RangedIterator& rng_it )
+        -> node*
+    {
+        RangedIterator begin = rng_it;
+
+        if ( ( *rng_it == '&' ) ) {
+            step_iterator( rng_it );
+
+            while( !is_eof( rng_it )
+                   && ( ( *rng_it >= 'A' && *rng_it <= 'Z' )
+                        || ( *rng_it >= 'a' && *rng_it <= 'z' )
+                        || ( *rng_it >= '0' && *rng_it <= '9' ) )
+                ) {
+                step_iterator( rng_it );
+            }
+
+            return make_node<keyword>( std::string( begin.it(), rng_it.it() ) );
+
+        } else {
+            rng_it = begin;
+            return nullptr;
+        }
+    }
 
     template<typename RangedIterator>
     auto parse_digit( RangedIterator& rng_it )
@@ -614,8 +676,8 @@ namespace yakkai
             return false;
         }();
 
-        if ( *rng_it == 'e' || *rng_it == 'E' ) {
-            if ( has_digit || has_float_number ) {
+        if ( has_digit || has_float_number ) {
+            if ( *rng_it == 'e' || *rng_it == 'E' ) {
                 step_iterator( rng_it );
                 skip_space( rng_it );
 
@@ -627,14 +689,14 @@ namespace yakkai
                     }
                     exp += std::string( base_it.it(), rng_it.it() );
                 }
-
-            } else {
-                rng_it = begin;
-                return nullptr;
             }
-        }
 
-        return make_node<float_value>( number, exp );
+            return make_node<float_value>( number, exp );
+
+        } else {
+            rng_it = begin;
+            return nullptr;
+        }
     }
 
 
@@ -644,10 +706,10 @@ namespace yakkai
     auto parse_numbers( RangedIterator& rng_it )
         -> node*
     {
-        if ( node* i = parse_integer( rng_it ) ) {
+        if ( auto i = parse_integer( rng_it ) ) {
             return i;
 
-        } else if ( node* f = parse_float( rng_it ) ) {
+        } else if ( auto f = parse_float( rng_it ) ) {
             return f;
 
         } else {
@@ -660,7 +722,10 @@ namespace yakkai
     auto parse_atom( RangedIterator& rng_it )
         -> node*
     {
-        if ( auto s = parse_symbol( rng_it ) ) {
+        if ( auto k = parse_keyword( rng_it ) ) {
+            return k;
+
+        } else if ( auto s = parse_symbol( rng_it ) ) {
             return s;
 
         } else if ( auto n = parse_numbers( rng_it ) ) {
@@ -808,7 +873,8 @@ namespace yakkai
     enum class error_code
     {
         none,
-        unexpected
+        syntax,
+        unexpected,
     };
 
     template<typename T>
@@ -822,6 +888,9 @@ namespace yakkai
 
         } catch( char const* const message ) {
             std::cout << "exception!: " << message << std::endl;
+
+            ec = error_code::syntax;
+            return nullptr;
 
         } catch( reached_to_eof const& e ) {
             std::cout << "reached to eof" << std::endl;
@@ -847,10 +916,10 @@ namespace yakkai
             {}
 
         public:
-            auto def_symbol( std::string const& name, node* const n )
+            auto def_symbol( std::string const& name, node* const n, std::shared_ptr<scope> const& s = nullptr )
                 -> node*
             {
-                environment_[name] = std::make_pair( n, nullptr );
+                environment_[name] = std::make_pair( n, s );
 
                 return n;
             }
@@ -875,14 +944,14 @@ namespace yakkai
             }
 
             auto find( std::string const& name )
-                -> std::pair<node*, std::shared_ptr<scope>>
+                -> std::tuple<node*, std::shared_ptr<scope>>
             {
                 auto&& it = environment_.find( name );
                 if ( it != environment_.cend() ) return it->second;
 
                 if ( has_parent() ) return parent_.lock()->find( name );
 
-                return std::make_pair( nullptr, nullptr );
+                return std::forward_as_tuple( nullptr, nullptr );
             }
 
             auto find_node( std::string const& name )
@@ -910,40 +979,29 @@ namespace yakkai
         };
 
 
-        auto as_node( std::pair<node*, std::shared_ptr<scope>> const& p )
+        template<typename S>
+        auto as_node( std::tuple<node*, std::shared_ptr<S>> const& p )
             -> node*
         {
             return std::get<0>( p );
         }
 
-        auto as_scope( std::pair<node*, std::shared_ptr<scope>> const& p )
+        template<typename S>
+        auto as_node( std::tuple<node const*, std::shared_ptr<S>> const& p )
+            -> node const*
+        {
+            return std::get<0>( p );
+        }
+
+        template<typename N>
+        auto as_scope( std::tuple<N*, std::shared_ptr<scope>> const& p )
             -> std::shared_ptr<scope> const&
         {
             return std::get<1>( p );
         }
 
 
-        template<typename I>
-        auto gcd( I m, I n )
-            -> I
-        {
-            if ( n < m ) std::swap( m, n );
 
-            I r;
-            while( n != 0 ) {
-                r = m % n;
-                m = n;
-                n = r;
-            }
-            return m;
-        }
-
-        template<typename I>
-        auto lcm( I m, I n )
-            -> I
-        {
-            return ( m * n ) / gcd( m, n );
-        }
 
 
         class page
@@ -1266,6 +1324,30 @@ namespace yakkai
             std::function<void (void*)> deleter_;
         };
 
+
+        template<typename I>
+        auto gcd( I m, I n )
+            -> I
+        {
+            if ( n < m ) std::swap( m, n );
+
+            I r;
+            while( n != 0 ) {
+                r = m % n;
+                m = n;
+                n = r;
+            }
+            return m;
+        }
+
+        template<typename I>
+        auto lcm( I m, I n )
+            -> I
+        {
+            return ( m * n ) / gcd( m, n );
+        }
+
+
         //
         class gc
         {
@@ -1279,11 +1361,10 @@ namespace yakkai
 
         public:
             template<typename T, typename... Args>
-            auto allocate( Args&&... args )
+            auto make_object( Args&&... args )
                 -> T*
             {
                 auto const block_size = lcm( sizeof( T ), alignof( T ) );
-                std::cout << "aaaa: " << sizeof( T ) << " :: " << block_size << std::endl;
 
                 prepare_page<T>( block_size );
 
@@ -1325,8 +1406,8 @@ namespace yakkai
             auto add_page( std::size_t const& block_size )
                 -> void
             {
-                std::cout << "aaaa" << std::endl;
                 auto p = std::make_shared<page>( block_size, []( void* p ) {
+                        // TODO: check default destructable
                         static_cast<T*>( p )->~T();
                     } );
 
@@ -1353,8 +1434,6 @@ namespace yakkai
                     auto&& p = it->second;
 
                     if ( !p->is_full() ) {
-                        std::cout << "BBBBBB" << std::endl;
-
                         auto const object = p->construct_object<T>( std::forward<Args>( args )... );
                         if ( object == nullptr ) {
                             assert( false && "" );
@@ -1466,30 +1545,69 @@ namespace yakkai
                 using namespace std::placeholders;
 
                 //
-                def_global_native_function( "add", std::bind( &machine::add, this, _1, _2 ) );
+                def_global_native_function( "deffun", std::bind( &machine::define_function, this, _1, _2, _3 ) );
+                def_global_native_function( "add", std::bind( &machine::add, this, _1, _2, _3 ) );
             }
 
-            auto eval( node* const n )
-                -> node*
+        public:
+            auto eval( node const* const n )
+                -> node const*
             {
-                return eval( n, scope_ );
+                return as_node( eval( n, scope_ ) );
             }
 
-            auto eval( node* const n, std::shared_ptr<scope> const& current_scope )
-                -> node*
+        private:
+            auto eval( node const* const n, std::shared_ptr<scope> const& current_scope )
+                -> std::tuple<node const*, std::shared_ptr<scope>>
             {
                 if ( is_nil( n ) ) {
-                    return nullptr;
+                    return std::forward_as_tuple( nullptr, current_scope );
 
                 } else if ( n->type == node_type::e_list ) {
-                    auto c = static_cast<cons* const>( n );
-                    if ( is_symbol( c->car ) ) {
-                        // try to function call
-                        return function_call( c, current_scope );
+                    // list is given
+                    auto c = static_cast<cons const* const>( n );
+
+                    if ( is_nil( c ) ) {
+                        assert( false && "nil was given..." );
                     }
+
+                    // try to call(function/macro)
+                    auto&& head_p = eval( c->car, current_scope );
+                    if ( is_callable( as_node( head_p ) ) ) {
+                        assert( is_list( c->cdr ) );
+
+                        return std::forward_as_tuple(
+                            call_function(
+                                static_cast<symbol const* const>( as_node( head_p ) ),
+                                static_cast<cons const* const>( c->cdr ),
+                                as_scope( head_p ),
+                                current_scope
+                                ),
+                            current_scope
+                            );
+
+                    } else {
+                        // TODO: check that is macro given...
+                        print2( as_node( head_p ) );
+                        assert( false && "reciever is not callable..." );
+                    }
+
+                } else if ( n->type == node_type::e_symbol ) {
+                    auto&& reciever_symbol = static_cast<symbol const* const>( n );
+
+                    std::cout << "look_up: " << reciever_symbol->value << std::endl;
+                    auto&& p = current_scope->find( reciever_symbol->value );
+
+                    auto&& target_node = as_node( p );
+                    if ( target_node == nullptr ) {
+                        assert( false && "symbol was not found" );
+                    }
+
+                    return p;
                 }
 
-                return n;
+                // otherwise, return
+                return std::forward_as_tuple( n, current_scope );
             }
 
         public:
@@ -1497,62 +1615,114 @@ namespace yakkai
             auto def_global_native_function( std::string const& name, F&& f )
                 -> node*
             {
-                return scope_->def_symbol( name, make_node<native_function_symbol>( std::forward<F>( f ) ) );
+                return scope_->def_symbol( name, make_node<native_function>( std::forward<F>( f ) ), scope_->make_inner_scope() );
             }
 
         private:
-            auto function_call( cons* const c, std::shared_ptr<scope> const& current_scope )
-                -> node*
+            auto call_function(
+                node const* const reciever,
+                cons const* const args,
+                std::shared_ptr<scope> const& target_scope,
+                std::shared_ptr<scope> const& callee_scope
+                )
+                -> node const*
             {
-                assert( is_symbol( c->car ) );
-                auto s = static_cast<symbol* const>( c->car );
+                if ( is_native_function( reciever ) ) {
+                    auto&& ns = static_cast<native_function const* const>( reciever );
+                    assert( ns->f_ != nullptr );
 
-                // check special function
-                // if ( is_special_form() ) {
-                // else {
-                // check is callable?
-                {
-                    // look up symbol
-                    auto&& p = current_scope->find( s->value );
-                    if ( std::get<0>( p ) == nullptr ) {
-                        std::cout << "error!!" << std::endl;
-                        assert( false );
-                    }
+                    // call native function
+                    return (ns->f_)( args, target_scope, callee_scope );
+
+                } else {
+                    //
+                    assert( target_scope != nullptr );
+
+                    auto&& new_scope = target_scope->make_inner_scope();
 
                     //
-                    auto&& target_node = as_node( p );
+                    assert( is_list( reciever ) && !is_nil( reciever ) );
+                    auto params = static_cast<cons const* const>( reciever )->car;
+                    assert( !is_nil( params ) );
 
                     //
-                    if ( is_native_function_symbol( target_node ) ) {
-                        auto&& ns = static_cast<native_function_symbol const* const>( target_node );
-                        assert( ns->f_ != nullptr );
+                    auto function_body = static_cast<cons const* const>( reciever )->cdr;
 
-                        // call native function
-                        return (ns->f_)( c->cdr, current_scope );
+                    cons const* parameter_head = static_cast<cons const* const>( params );
+                    cons const* argument_head = args;
 
-                    } else {
-                        //
-                        auto&& new_scope = as_scope( p )->make_inner_scope();
-                        std::cout << "not supported" << std::endl;
+                    bool reached_to_last_parameter = false;
+
+                    // map argument/parameter
+                    // TODO: check length of parameter/arguments & optional keyword
+                    assert( is_list( argument_head ) && is_list( parameter_head ) );
+                    while( !is_nil( parameter_head ) ) {
+                        // parameters
+                        if ( is_symbol( parameter_head->car ) ) {
+                            auto&& parameter_symbol = static_cast<symbol const* const>( parameter_head->car );
+                            std::cout << "parameter : " << parameter_symbol->value << std::endl;
+
+                            // set argument value
+                            callee_scope->def_symbol(
+                                parameter_symbol->value,
+                                argument_head->car,
+                                new_scope
+                                );
+
+                        } else if ( is_keyword( parameter_head->car ) ) {
+                            assert( false && "keyword was not supported yet" );
+
+                        } else {
+                            assert( false && "" );
+                        }
+
+
+                        parameter_head = static_cast<cons const* const>( parameter_head->cdr );
+
+                        // argument
+                        argument_head = static_cast<cons const* const>( argument_head->cdr );
                     }
+
+                    assert( is_list( function_body ) );
+                    return eval_prog_n(
+                        static_cast<cons const*>( function_body ),
+                        callee_scope
+                        );
                 }
 
                 assert( false );
                 return nullptr;
             }
 
+            auto eval_prog_n(
+                cons const* const prog,
+                std::shared_ptr<scope> const& target_scope
+                )
+                -> node const*
+            {
+                node const* last_value = nullptr;
+
+                cons const* head = prog;
+                while( !is_nil( head ) ) {
+                    auto&& ret = eval( head->car, target_scope );
+                    last_value = as_node( ret );
+
+                    head = static_cast<cons const*>( prog->cdr );
+                }
+
+                return last_value;
+            }
+
         private:
-            auto add( node* n, std::shared_ptr<scope> const& current_scope )
+            auto add( cons const* const n, std::shared_ptr<scope> const& current_scope, std::shared_ptr<scope> const& callee_scope )
                 -> node*
             {
-                assert( is_list( n ) );
-
                 node_type nt = node_type::e_integer;
                 double result = 0.0;
 
                 cons const* t = static_cast<cons const* const>( n );
                 while( !is_nil( t ) ) {
-                    auto&& v = eval( t->car );
+                    auto&& v = as_node( eval( t->car, current_scope ) );
 
                     if ( is_integer( v ) ) {
                         auto&& typed_val = static_cast<integer_value const* const>( v );
@@ -1571,13 +1741,9 @@ namespace yakkai
                     t = static_cast<cons const* const>( t->cdr );
                 }
 
-                std::cout << "Hellooo: " << result << " / " << (int)nt << std::endl;
-
-                gc_.allocate<integer_value>( result );
-
                 return [&]() -> node* {
                     if ( nt == node_type::e_integer ) {
-                         return make_node<integer_value>( result );
+                         return gc_.make_object<integer_value>( result );
 
                     } else if ( nt == node_type::e_float ) {
                         assert( false );
@@ -1586,6 +1752,41 @@ namespace yakkai
                     assert( false );
                     return nullptr;
                 }();
+            }
+
+            auto define_function( cons const* const n, std::shared_ptr<scope> const&, std::shared_ptr<scope> const& callee_scope )
+                -> node*
+            {
+                assert( !is_nil( n ) );
+
+                // check function name
+                cons const* const first = static_cast<cons const* const>( n );
+                if ( !is_symbol( first->car ) ) {
+                    assert( false && "function name must be symbol" );
+                    return nullptr;
+                }
+                symbol const* const function_name_symbol = static_cast<symbol const* const>( first->car );
+
+                // check argument
+                node* const second_n = first->cdr;
+                if ( !is_list( second_n ) || is_nil( second_n ) ) {
+                    assert( false && "missing lambda argument" );
+                    return nullptr;
+                }
+
+                cons* const lambda_form = static_cast<cons* const>( second_n );
+                if ( !is_list( lambda_form->car ) ) {
+                    assert( false && "function argument must be list" );
+                    return nullptr;
+                }
+
+                // set lambda form as callable!
+                lambda_form->set_attribute( node_attribute::e_callable );
+
+                std::cout << "define function !> " << function_name_symbol->value << std::endl;
+                callee_scope->def_symbol( function_name_symbol->value, lambda_form, callee_scope->make_inner_scope() );
+
+                return lambda_form;
             }
 
         private:
@@ -1614,13 +1815,19 @@ namespace yakkai
         for (;;) {
             auto s = parse_one_expression( rng_it, ec );
 
-            std::cout << "Result: " << std::endl;
+            std::cout << "<=== section ===>" << std::endl;
+            std::cout << "Parsed Result #=> ";
             print2( s );
-            std::cout << std::endl;
 
             if ( ec == error_code::none ) {
                 //
-                print2( m.eval( s ) );
+                auto&& e = m.eval( s );
+                std::cout << "Evaled Result #=> ";
+                print2( e );
+                std::cout << std::endl;
+
+            } else if ( ec == error_code::syntax ) {
+                break;
             }
 
 
@@ -1678,6 +1885,10 @@ int main()
 
     std::string const test_case = R"::(
 (add 1 2 3 4)
+(deffun tasu (a b) (add a b))
+(tasu 1 2)
+
+(deffun list (&rest objects) objects)
 (list (quote a) (quote b) abc)
 (a . b)
 ()

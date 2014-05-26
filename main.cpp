@@ -4,9 +4,15 @@
 #include <memory>
 #include <cassert>
 #include <cctype>
+#include <csetjmp>
 #include <iterator>
 #include <stdexcept>
-
+#include <limits>
+#include <map>
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
+#include <typeindex>
 
 namespace yakkai
 {
@@ -362,6 +368,8 @@ namespace yakkai
     auto make_node( Args&&... args )
         -> T*
     {
+        std::cout << sizeof( T ) << std::endl;
+
         return new T( std::forward<Args>( args )... );
     }
 
@@ -843,6 +851,8 @@ namespace yakkai
                 -> node*
             {
                 environment_[name] = std::make_pair( n, nullptr );
+
+                return n;
             }
 
             auto get_node_at( std::string const& name )
@@ -913,11 +923,545 @@ namespace yakkai
         }
 
 
+        template<typename I>
+        auto gcd( I m, I n )
+            -> I
+        {
+            if ( n < m ) std::swap( m, n );
+
+            I r;
+            while( n != 0 ) {
+                r = m % n;
+                m = n;
+                n = r;
+            }
+            return m;
+        }
+
+        template<typename I>
+        auto lcm( I m, I n )
+            -> I
+        {
+            return ( m * n ) / gcd( m, n );
+        }
+
+
+        class page
+        {
+            static constexpr std::size_t block_max = 4096;
+
+        public:
+            using pointer_type = unsigned char*;
+
+        public:
+            page( std::size_t const& block_size )
+                : block_size_( block_size )
+                , total_size_( block_size < block_max ? block_max : block_size )
+                , capacity_num_( block_size < block_max ? ( block_max / block_size ) : 1 )
+                , object_num_( 0 )
+                , data_( new unsigned char[total_size_] )
+                , free_bitmap_{}
+                , mark_bitmap_{}
+            {
+                assert( block_size >= 4 );
+            }
+
+            page( std::size_t const& block_size, std::function<void (void*)> const& deleter )
+                : block_size_( block_size )
+                , total_size_( block_size < block_max ? block_max : block_size )
+                , capacity_num_( block_size < block_max ? ( block_max / block_size ) : 1 )
+                , object_num_( 0 )
+                , data_( new unsigned char[total_size_] )
+                , free_bitmap_{}
+                , mark_bitmap_{}
+                , deleter_( deleter )
+            {}
+
+            page( page const& ) = delete;
+            page( page&& ) = delete;
+
+            ~page()
+            {
+                destruct_objects();
+                delete[] data_;
+            }
+
+        public:
+            template<typename T, typename... Args>
+            inline auto construct_object( Args&&... args )
+                -> T*
+            {
+                auto p = allocate();
+                if ( p == nullptr ) return nullptr;
+
+                return new( p ) T( std::forward<Args>( args )... );
+            }
+
+        private:
+            auto destruct_object( std::size_t const& i )
+                -> void
+            {
+                void* object = get_block_from_index( i );
+
+                if ( deleter_ ) {
+                    deleter_( object );
+                }
+                unmark( i );
+
+                //
+                free( i );
+            }
+
+            auto destruct_objects( bool do_skip_mask_check = true )
+                -> std::size_t
+            {
+                std::size_t n = 0;
+                for( std::size_t i=0; i<capacity_num_; ++i ) {
+                    if ( is_used( i ) ) {
+                        if ( !is_marked( i ) || do_skip_mask_check ) {
+                            std::cout << "?????????????????" << std::endl;
+                            destruct_object( i );
+                            ++n;
+                        }
+                    }
+                }
+
+                return n;
+            }
+
+        private:
+            auto allocate()
+                -> pointer_type
+            {
+                if ( is_full() ) return nullptr;
+
+                auto const bi = find_free_block_index();
+                if ( bi == std::numeric_limits<std::size_t>::max() ) {
+                    return nullptr;
+                }
+
+                mark_as_used( bi );
+                ++object_num_;
+
+                return get_block_from_index( bi );
+            }
+
+            auto free( std::size_t const& i )
+                -> void
+            {
+                if ( is_used( i ) ) {
+                    // this pointer is marked as used
+                    mark_as_free( i );
+                    --object_num_;
+                } else {
+                    assert( false && "invalid pointer was given..." );
+                }
+            }
+
+        public:
+            inline auto is_full() const
+                -> bool
+            {
+                return object_num_ >= capacity_num_;
+            }
+
+            inline auto is_included( void const* const p ) const
+                -> bool
+            {
+                std::cout << (void*)data_ << " <= " << (void*)p << " < " << (void*)( data_ + total_size_ ) << std::endl;
+                return p >= data_ && p < ( data_ + total_size_ );
+            }
+
+        public:
+            inline auto operator<( page const& rhs ) const
+                -> bool
+            {
+                return data_ < rhs.data_;
+            }
+
+            inline auto operator<( void const* const p ) const
+                -> bool
+            {
+                return data_ < p;
+            }
+
+            friend auto operator<<( std::ostream& os, page const& rhs )
+                -> std::ostream&
+            {
+                std::cout << "memory: " << (void*)rhs.data_;
+                return os;
+            }
+
+        public:
+            template<typename T>
+            auto mark( T const* const np )
+                -> void
+            {
+                auto const i = get_index_from_pointer( np );
+                bit_set( i, mark_bitmap_ );
+            }
+
+            inline auto sweep()
+                -> std::size_t
+            {
+                return destruct_objects( false );
+            }
+
+        private:
+            inline auto is_marked( std::size_t const& i ) const
+                -> bool
+            {
+                return bit_test( i, mark_bitmap_ );
+            }
+
+            auto unmark( std::size_t const& i )
+                -> void
+            {
+                bit_clear( i, mark_bitmap_ );
+            }
+
+        private:
+            inline auto is_used( std::size_t const& i ) const
+                -> bool
+            {
+                return bit_test( i, free_bitmap_ );
+            }
+
+            auto mark_as_used( std::size_t const& i )
+                -> void
+            {
+                auto const array_index = i / 64;
+                auto const bit_index = i % 64;
+
+                free_bitmap_[array_index] |= static_cast<std::uint64_t>( 1 ) << ( 64 - bit_index - 1 );
+            }
+
+            auto mark_as_free( std::size_t const& i )
+                -> void
+            {
+                auto const array_index = i / 64;
+                auto const bit_index = i % 64;
+
+                free_bitmap_[array_index] &= ~( static_cast<std::uint64_t>( 1 ) << ( 64 - bit_index - 1 ) );
+            }
+
+        private:
+            inline auto get_block_from_index( std::size_t const& i )
+                -> pointer_type
+            {
+                return data_ + ( block_size_ * i );
+            }
+
+            template<typename T>
+            inline auto get_index_from_pointer( T const* const np ) const
+                -> std::size_t
+            {
+                auto&& p = reinterpret_cast<unsigned char const*>( np );
+                assert( p >= data_ && p < data_ + total_size_ );
+
+                return static_cast<std::size_t>( p - data_ ) / block_size_;
+            }
+
+            auto find_free_block_index() const
+                -> std::size_t
+            {
+                constexpr auto test8 = []( std::uint8_t const& n ) -> std::size_t {
+                    for( int i=0; i<8; ++i ) {
+                        if ( ( n & ( 1 << ( 8 - i - 1 ) ) ) == 0 ) return i;
+                    }
+
+                    assert( false );
+                };
+
+                constexpr auto test16 = []( std::uint16_t const& n ) -> std::size_t {
+                    std::uint8_t const h = ( n & 0xff00 ) >> 8;
+                    if ( h != std::numeric_limits<std::uint8_t>::max() ) {
+                        return 8 * 0 + test8( h );
+                    }
+
+                    std::uint8_t const l = ( n & 0x00ff );
+                    if ( l!= std::numeric_limits<std::uint8_t>::max() ) {
+                        return 8 * 1 + test8( l );
+                    }
+
+                    assert( false );
+                };
+
+                constexpr auto test32 = []( std::uint32_t const& n ) -> std::size_t {
+                    std::uint16_t const h = ( n & 0xffff0000 ) >> 16;
+                    if ( h != std::numeric_limits<std::uint16_t>::max() ) {
+                        return 16 * 0 + test16( h );
+                    }
+
+                    std::uint16_t const l = ( n & 0x0000ffff );
+                    if ( l != std::numeric_limits<std::uint16_t>::max() ) {
+                        return 16 * 1 + test16( l );
+                    }
+
+                    assert( false );
+                };
+
+                std::size_t i = 0;
+                for( auto&& n : free_bitmap_ ) {
+                    if ( n != std::numeric_limits<std::uint64_t>::max() ) {
+                        std::uint32_t const h = ( n & 0xffffffff00000000 ) >> 32;
+                        if ( h != std::numeric_limits<std::uint32_t>::max() ) {
+                            return 64 * i + 32 * 0 + test32( h );
+                        }
+
+                        std::uint32_t const l = ( n & 0x00000000ffffffff );
+                        if ( l != std::numeric_limits<std::uint32_t>::max() ) {
+                            return 64 * i + 32 * 1 + test32( l );
+                        }
+                    }
+
+                    ++i;
+                }
+
+                // failed
+                return std::numeric_limits<std::size_t>::max();
+            }
+
+        private:
+            template<typename T>
+            auto bit_set( std::size_t const& i, T& bitmap) const
+                -> void
+            {
+                auto const array_index = i / 64;
+                auto const bit_index = i % 64;
+
+                bitmap[array_index] |= static_cast<std::uint64_t>( 1 ) << ( 64 - bit_index - 1 );
+            }
+
+            template<typename T>
+            auto bit_clear( std::size_t const& i, T& bitmap) const
+                -> void
+            {
+                auto const array_index = i / 64;
+                auto const bit_index = i % 64;
+
+                bitmap[array_index] &= ~( static_cast<std::uint64_t>( 1 ) << ( 64 - bit_index - 1 ) );
+            }
+
+            template<typename T>
+            auto bit_test( std::size_t const& i, T& bitmap) const
+                -> bool
+            {
+                auto const array_index = i / 64;
+                auto const bit_index = i % 64;
+
+                return ( bitmap[array_index] & ( static_cast<std::uint64_t>( 1 ) << ( 64 - bit_index - 1 ) ) ) != 0;
+            }
+
+        private:
+            std::size_t block_size_;
+            std::size_t total_size_;
+            std::size_t capacity_num_;
+            std::size_t object_num_;
+
+            unsigned char* data_;
+            std::array<std::uint64_t, block_max/4> free_bitmap_;
+            std::array<std::uint64_t, block_max/4> mark_bitmap_;
+
+            std::function<void (void*)> deleter_;
+        };
+
+        //
+        class gc
+        {
+        private:
+            constexpr static std::size_t const MinAlign = 4;
+
+        public:
+            gc( void volatile const* const p )
+                : stack_begin_( reinterpret_cast<std::uintptr_t>( p ) )
+            {}
+
+        public:
+            template<typename T, typename... Args>
+            auto allocate( Args&&... args )
+                -> T*
+            {
+                auto const block_size = lcm( sizeof( T ), alignof( T ) );
+                std::cout << "aaaa: " << sizeof( T ) << " :: " << block_size << std::endl;
+
+                prepare_page<T>( block_size );
+
+                {
+                    auto&& p = try_to_allocate<T>( block_size, std::forward<Args>( args )... );
+
+                    // Succeeded!
+                    if ( p != nullptr ) return p;
+                }
+
+                // if reached to this flow, page table is full. So run Garbage collector!
+                auto&& freed_num = full_collect();
+                if ( freed_num < 100 ) {
+                    add_page<T>( block_size );
+                }
+
+                // retry
+                {
+                    auto&& p = try_to_allocate<T>( block_size, std::forward<Args>( args )... );
+                    if ( p != nullptr ) return p;
+                }
+
+                // if reached to this flow, totally failed...
+                assert( false );
+            }
+
+        private:
+            template<typename T>
+            auto prepare_page( std::size_t const& block_size )
+                -> void
+            {
+                auto range = pages_.equal_range( typeid( T ) );
+                if ( std::get<0>( range ) == std::get<1>( range ) ) {
+                    add_page<T>( block_size );
+                }
+            }
+
+            template<typename T>
+            auto add_page( std::size_t const& block_size )
+                -> void
+            {
+                std::cout << "aaaa" << std::endl;
+                auto p = std::make_shared<page>( block_size, []( void* p ) {
+                        static_cast<T*>( p )->~T();
+                    } );
+
+                pages_.emplace( typeid( T ), p );
+                sorted_pages_.emplace_back( p );
+
+                std::sort( sorted_pages_.begin(), sorted_pages_.end(), []( std::shared_ptr<page> const& r, std::shared_ptr<page> const& l ) {
+                        return *r < *l;
+                    } );
+
+                std::cout << "=======" << std::endl;
+                for( auto&& p : sorted_pages_ ) {
+                    std::cout << *p << std::endl;
+                }
+            }
+
+            template<typename T, typename... Args>
+            auto try_to_allocate( std::size_t const& block_size, Args&&... args )
+                -> T*
+            {
+                auto const& range = pages_.equal_range( typeid( T ) );
+
+                for( auto it = std::get<0>( range ); it != std::get<1>( range ); ++it ) {
+                    auto&& p = it->second;
+
+                    if ( !p->is_full() ) {
+                        std::cout << "BBBBBB" << std::endl;
+
+                        auto const object = p->construct_object<T>( std::forward<Args>( args )... );
+                        if ( object == nullptr ) {
+                            assert( false && "" );
+                        }
+
+                        // succeeded!!
+                        return object;
+                    }
+                }
+
+                return nullptr;
+            }
+
+        public:
+            auto set_base_stack_address( void volatile const* const p )
+                -> void
+            {
+                stack_begin_ = reinterpret_cast<std::uintptr_t>( p );
+            }
+
+        private:
+            auto full_collect()
+                -> std::size_t
+            {
+                mark_stack();
+                // TODO: mark_registers();
+                if ( custom_marker_ ){
+                    using namespace std::placeholders;
+                    custom_marker_( std::bind( &gc::mark_object, this, _1 ) );
+                }
+
+                return sweep();
+            }
+
+        private:
+            auto mark_stack()
+                -> void
+            {
+                //
+                alignas( void* ) int volatile _dummy_stack_end_object;
+
+                auto high = stack_begin_;
+                auto low = reinterpret_cast<std::uintptr_t>( &_dummy_stack_end_object );
+                if ( high < low ) std::swap( high, low );
+
+                //std::cout << "" << low << "/" << high << std::endl;
+
+                // ub...?
+                for( auto p=reinterpret_cast<node** const>( low ); p<reinterpret_cast<node** const>( high ); ++p ) {
+                    mark_object( *p );
+                }
+            }
+
+            auto mark_object( node* n )
+                -> void
+            {
+                //std::cout << "??? -> " << n << std::endl;
+
+                // binary search
+                std::size_t begin = 0, end = sorted_pages_.size(), point = 0, prev_point = 0;
+                for(;;) {
+                    point = std::max<std::size_t>( 0, std::min<std::size_t>( end - 1, point + ( end - begin ) / 2 ) );
+                    if ( point == prev_point ) break;
+
+                    if ( *sorted_pages_[point] < n ) {
+                        begin = point;
+                    } else {
+                        end = point;
+                    }
+                    //std::cout << "point: " << point << " / " << sorted_pages_.size() << "[" << begin << ", " << end << ")" << std::endl;
+
+                    prev_point = point;
+                }
+
+                auto&& target_page = sorted_pages_[point];
+                if ( target_page->is_included( n ) ) {
+                    target_page->mark( n );
+                    //std::cout << "!!!!!!!! pp: " << (void*)n << std::endl;
+                }
+            }
+
+        private:
+            auto sweep()
+                -> std::size_t
+            {
+                std::size_t total_collected_num = 0;
+                for( auto&& p : sorted_pages_ ) {
+                    total_collected_num += p->sweep();
+                }
+                return total_collected_num;
+            }
+
+        private:
+            std::uintptr_t stack_begin_;
+            std::function<void (std::function<void (node*)> const&)> custom_marker_;
+
+            std::unordered_multimap<std::type_index, std::shared_ptr<page>> pages_;
+            std::vector<std::shared_ptr<page>> sorted_pages_;
+        };
+
+
         class machine
         {
         public:
-            machine()
+            machine( void volatile const* const p )
                 : scope_( std::make_shared<scope>() )
+                , gc_( p )
             {
                 using namespace std::placeholders;
 
@@ -953,7 +1497,7 @@ namespace yakkai
             auto def_global_native_function( std::string const& name, F&& f )
                 -> node*
             {
-                scope_->def_symbol( name, make_node<native_function_symbol>( std::forward<F>( f ) ) );
+                return scope_->def_symbol( name, make_node<native_function_symbol>( std::forward<F>( f ) ) );
             }
 
         private:
@@ -1029,6 +1573,8 @@ namespace yakkai
 
                 std::cout << "Hellooo: " << result << " / " << (int)nt << std::endl;
 
+                gc_.allocate<integer_value>( result );
+
                 return [&]() -> node* {
                     if ( nt == node_type::e_integer ) {
                          return make_node<integer_value>( result );
@@ -1044,6 +1590,7 @@ namespace yakkai
 
         private:
             std::shared_ptr<scope> scope_;
+            gc gc_;
         };
     } // namespace
 
@@ -1057,8 +1604,11 @@ namespace yakkai
     {
         auto rng_it = ranged_iterator<std::string::const_iterator>( source.cbegin(), source.cend() );
 
+        // make dummy object into stack to get stack address...
+        alignas( void* ) int volatile _dummy_stack_start_object;
+
         error_code ec;
-        interpreter::machine m;
+        interpreter::machine m( &_dummy_stack_start_object );
 
         //
         for (;;) {
@@ -1082,13 +1632,50 @@ namespace yakkai
 
 } // namespace yakkai
 
+#if 0
+void test( yakkai::interpreter::gc& g )
+{
+    struct A
+    {
+        int ababa[128];
+
+        A( int i )
+            : ababa{ i }
+        {}
+
+        ~A()
+        {
+            std::cout << "destructed: " << ababa[0] << std::endl;
+        }
+
+        void f() const
+            { std::cout << "f: " << ababa[0] << std::endl; }
 
 
+    };
 
+    A* p = nullptr;
+    A* oldp = nullptr;
+    for( int i=0; i<10; ++i ) {
+        p = g.allocate<A>( i );
+        if ( oldp != nullptr ) {
+            oldp->f();
+        }
+
+        std::cout << (void*)p << " and " << (void*)oldp << std::endl;
+
+        oldp = p;
+    }
+
+    std::cout << "pointer: " << sizeof( A* ) << "/" << alignof( A* )<< std::endl;
+}
+#endif
 
 
 int main()
 {
+
+
     std::string const test_case = R"::(
 (add 1 2 3 4)
 (list (quote a) (quote b) abc)
@@ -1113,4 +1700,27 @@ nil
 
 
     yakkai::eval_source_code( test_case );
+
+#if 0
+    // make dummy object into stack to get stack address...
+    alignas( void*) int volatile _dummy_stack_start_object;
+
+    {
+        yakkai::interpreter::gc g( &_dummy_stack_start_object );
+        test( g );
+    }
+#endif
+
+#if 0
+    yakkai::interpreter::page p( 24 );
+
+    for( int i=0; i<10000000; ++i ) {
+        auto const index = p.find_free_block_index();
+        if ( index == std::numeric_limits<std::size_t>::max() ) {
+            break;
+        }
+        std::cout << index << std::endl;
+        p.mark_as_used( index );
+    }
+#endif
 }

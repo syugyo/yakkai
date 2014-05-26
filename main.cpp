@@ -102,7 +102,7 @@ namespace yakkai
     struct native_function : public node
     {
         using func_type = std::function<
-            node* (cons const* const, std::shared_ptr<interpreter::scope> const&, std::shared_ptr<interpreter::scope> const&)
+            node* (cons const* const, std::shared_ptr<interpreter::scope> const&)
             >;
 
         explicit native_function( func_type const& f )
@@ -1542,9 +1542,9 @@ namespace yakkai
                 using namespace std::placeholders;
 
                 //
-                def_global_native_function( "deffun", std::bind( &machine::define_function, this, _1, _2, _3 ) );
-                def_global_native_function( "add", std::bind( &machine::add, this, _1, _2, _3 ) );
-                def_global_native_function( "if" , std::bind( &machine::add, this, _1, _2, _3 ) );
+                def_global_native_function( "deffun", std::bind( &machine::define_function, this, _1, _2 ) );
+                def_global_native_function( "add", std::bind( &machine::add, this, _1, _2 ) );
+                def_global_native_function( "if" , std::bind( &machine::add, this, _1, _2 ) );
             }
 
         public:
@@ -1630,7 +1630,7 @@ namespace yakkai
                     assert( ns->f_ != nullptr );
 
                     // call native function
-                    return (ns->f_)( args, current_scope, nullptr );
+                    return (ns->f_)( args, current_scope );
 
                 } else {
                     //
@@ -1724,7 +1724,7 @@ namespace yakkai
             }
 
         private:
-            auto add( cons const* const n, std::shared_ptr<scope> const& current_scope, std::shared_ptr<scope> const& )
+            auto add( cons const* const n, std::shared_ptr<scope> const& current_scope )
                 -> node*
             {
                 node_type nt = node_type::e_integer;
@@ -1766,7 +1766,7 @@ namespace yakkai
                 }();
             }
 
-            auto define_function( cons const* const n, std::shared_ptr<scope> const& current_scope, std::shared_ptr<scope> const& )
+            auto define_function( cons const* const n, std::shared_ptr<scope> const& current_scope )
                 -> node*
             {
                 assert( !is_nil( n ) );

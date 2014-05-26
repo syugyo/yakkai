@@ -1547,22 +1547,22 @@ namespace yakkai
             }
 
         public:
-            auto eval( node const* const n )
-                -> node const*
+            auto eval( node* const n )
+                -> node*
             {
                 return as_node( eval( n, scope_ ) );
             }
 
         private:
-            auto eval( node const* const n, std::shared_ptr<scope> const& current_scope )
-                -> std::tuple<node const*, std::shared_ptr<scope>>
+            auto eval( node* const n, std::shared_ptr<scope> const& current_scope )
+                -> std::tuple<node*, std::shared_ptr<scope>>
             {
                 if ( is_nil( n ) ) {
                     return std::forward_as_tuple( nullptr, current_scope );
 
                 } else if ( n->type == node_type::e_list ) {
                     // list is given
-                    auto c = static_cast<cons const* const>( n );
+                    auto c = static_cast<cons* const>( n );
 
                     if ( is_nil( c ) ) {
                         assert( false && "nil was given..." );
@@ -1576,7 +1576,7 @@ namespace yakkai
                         return std::forward_as_tuple(
                             call_function(
                                 static_cast<symbol const* const>( as_node( head_p ) ),
-                                static_cast<cons const* const>( c->cdr ),
+                                static_cast<cons* const>( c->cdr ),
                                 as_scope( head_p ),
                                 current_scope
                                 ),
@@ -1618,22 +1618,35 @@ namespace yakkai
         private:
             auto call_function(
                 node const* const reciever,
-                cons const* const args,
+                cons* const args,
                 std::shared_ptr<scope> const& target_scope,
-                std::shared_ptr<scope> const& callee_scope
+                std::shared_ptr<scope> const& current_scope
                 )
-                -> node const*
+                -> node*
             {
                 if ( is_native_function( reciever ) ) {
                     auto&& ns = static_cast<native_function const* const>( reciever );
                     assert( ns->f_ != nullptr );
 
                     // call native function
-                    return (ns->f_)( args, target_scope, callee_scope );
+                    return (ns->f_)( args, current_scope, nullptr );
 
                 } else {
                     //
                     assert( target_scope != nullptr );
+
+                    //
+                    // eval args( rewrite list )
+                    {
+                        auto head = args;
+                        while( !is_nil( head ) ) {
+                            auto&& p = as_node( eval( head->car, current_scope ) );
+                            std::swap( head->car, p );
+
+                            assert( is_list( head->cdr ) );
+                            head = static_cast<cons* const>( head->cdr );
+                        }
+                    }
 
                     auto&& new_scope = target_scope->make_inner_scope();
 
@@ -1660,10 +1673,9 @@ namespace yakkai
                             std::cout << "parameter : " << parameter_symbol->value << std::endl;
 
                             // set argument value
-                            callee_scope->def_symbol(
+                            new_scope->def_symbol(
                                 parameter_symbol->value,
-                                argument_head->car,
-                                new_scope
+                                argument_head->car
                                 );
 
                         } else if ( is_keyword( parameter_head->car ) ) {
@@ -1683,7 +1695,7 @@ namespace yakkai
                     assert( is_list( function_body ) );
                     return eval_prog_n(
                         static_cast<cons const*>( function_body ),
-                        callee_scope
+                        new_scope
                         );
                 }
 
@@ -1695,9 +1707,9 @@ namespace yakkai
                 cons const* const prog,
                 std::shared_ptr<scope> const& target_scope
                 )
-                -> node const*
+                -> node*
             {
-                node const* last_value = nullptr;
+                node* last_value = nullptr;
 
                 cons const* head = prog;
                 while( !is_nil( head ) ) {
@@ -1711,7 +1723,7 @@ namespace yakkai
             }
 
         private:
-            auto add( cons const* const n, std::shared_ptr<scope> const& current_scope, std::shared_ptr<scope> const& callee_scope )
+            auto add( cons const* const n, std::shared_ptr<scope> const& current_scope, std::shared_ptr<scope> const& )
                 -> node*
             {
                 node_type nt = node_type::e_integer;
@@ -1731,6 +1743,8 @@ namespace yakkai
 
                     } else {
                         // type error
+                        std::cout << "!!! type error" << std::endl;
+                        print2( v );
                         assert( false );
                     }
 
@@ -1751,7 +1765,7 @@ namespace yakkai
                 }();
             }
 
-            auto define_function( cons const* const n, std::shared_ptr<scope> const&, std::shared_ptr<scope> const& callee_scope )
+            auto define_function( cons const* const n, std::shared_ptr<scope> const& current_scope, std::shared_ptr<scope> const& )
                 -> node*
             {
                 assert( !is_nil( n ) );
@@ -1781,7 +1795,7 @@ namespace yakkai
                 lambda_form->set_attribute( node_attribute::e_callable );
 
                 std::cout << "define function !> " << function_name_symbol->value << std::endl;
-                callee_scope->def_symbol( function_name_symbol->value, lambda_form, callee_scope->make_inner_scope() );
+                current_scope->def_symbol( function_name_symbol->value, lambda_form, current_scope->make_inner_scope() );
 
                 return lambda_form;
             }
@@ -1884,6 +1898,11 @@ int main()
 (add 1 2 3 4)
 (deffun tasu (a b) (add a b))
 (tasu 1 2)
+(tasu 1 (tasu 2 3))
+
+(tasu 10 (tasu 1 (tasu 2 3)))
+
+(tasu 1 (tasu 2103 1))
 
 (deffun list (&rest objects) objects)
 (list (quote a) (quote b) abc)

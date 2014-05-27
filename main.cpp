@@ -1,4 +1,4 @@
-#include <iostrea>
+#include <iostream>
 #include <string>
 #include <map>
 #include <memory>
@@ -157,10 +157,11 @@ namespace yakkai
         -> bool
     {
         if ( n == nullptr ) {
-            return true;
+            assert( false );
 
         } else if ( n->type == node_type::e_list ) {
-            return is_nil( static_cast<cons const* const>( n )->car );
+            auto&& c = static_cast<cons const* const>( n );
+            return c->car == nullptr && c->cdr == nullptr;
 
         } else {
             return false;
@@ -561,6 +562,7 @@ namespace yakkai
         }
     }
 
+    auto const& nil_object = make_node<cons>();
 
 
 
@@ -787,12 +789,13 @@ namespace yakkai
 
         //
         if ( s == nullptr ) {
-            outer_cell->cdr = nullptr;
-            return nullptr;
+            outer_cell->cdr = nil_object;
+            return nil_object;
 
         } else {
             auto inner_cell = make_node<cons>();
             inner_cell->car = s;
+            inner_cell->cdr = nil_object;
 
             assert( outer_cell != nullptr );
             outer_cell->cdr = inner_cell;
@@ -815,12 +818,13 @@ namespace yakkai
             // car
             auto s = parse_s_expression_or_closer( rng_it );
             if ( s == nullptr ) {
-                return nullptr;
+                return nil_object;
             }
 
             //
             auto cell = make_node<cons>();
             cell->car = s;
+            cell->cdr = nil_object;
 
             skip_space( rng_it );
             if ( *rng_it == '.' ) {
@@ -834,18 +838,20 @@ namespace yakkai
                 // e_list
                 auto last_cell = cell;
                 while( auto&& v = parse_s_expression_or_closer( rng_it, last_cell ) ) {
+                    if ( is_nil( v ) ) break;
                     last_cell = v;
                 }
 
                 return cell;
             }
 
-        } else if ( is_enable_closer &&  *rng_it == ')' ) {
-            return parse_closer_s_expression( rng_it );
+        } else if ( is_enable_closer && *rng_it == ')' ) {
+            return parse_closer_s_expression( rng_it, nullptr );
 
         } else {
             // atom
             auto a = parse_atom( rng_it );
+            assert( a != nullptr );
 
             if ( !parse_token_separate( rng_it ) ) {
                 throw "parse error";
@@ -1811,7 +1817,7 @@ namespace yakkai
                 cons const* const first = n;
 
                 assert( is_list( first->cdr ) );
-                
+
                 cons const* const second = static_cast<cons const* const>( first->cdr );
 
                 assert( !is_nil( second ) );
@@ -1821,7 +1827,7 @@ namespace yakkai
                     return second->cdr;
                 } else {
                     auto&& condition = as_node( eval( first->car, current_scope ) );
-                    
+
                     if( !is_nil( condition ) ) {
                         // then
                         return as_node( eval( second->car, current_scope ) );
@@ -1831,7 +1837,7 @@ namespace yakkai
                     }
                 }
             }
-            
+
         private:
             std::shared_ptr<scope> scope_;
             gc gc_;
@@ -1927,6 +1933,9 @@ int main()
 
 
     std::string const test_case = R"::(
+
+
+
 (add 1 2 3 4)
 (deffun tasu (a b) (add a b))
 (tasu 1 2)

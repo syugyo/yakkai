@@ -1555,6 +1555,8 @@ namespace yakkai
                 def_global_native_function( "lambda", std::bind( &machine::make_lambda, this, _1, _2 ) );
                 def_global_native_function( "progn", std::bind( &machine::progn, this, _1, _2 ) );
 
+                def_global_native_function( "quote", std::bind( &machine::quote, this, _1, _2 ) );
+
                 def_global_native_function( "if", std::bind( &machine::if_function, this, _1, _2 ) );
                 // def_global_native_function( "car", std::bind( &machine::car, this, _1 ) );
                 // def_global_native_function( "cdr", std::bind( &machine::cdr, this, _1 ) );
@@ -1821,6 +1823,14 @@ namespace yakkai
                 }();
             }
 
+            auto quote( cons* const n, std::shared_ptr<scope> const& )
+                -> node*
+            {
+                assert( !is_nil( n ) );
+
+                return n;
+            }
+
             auto define_function( cons* const n, std::shared_ptr<scope> const& current_scope )
                 -> node*
             {
@@ -2032,6 +2042,8 @@ int main()
 (if 1 (progn 1 2 3) (progn 2 2 4))
 (if () (progn 1 2 3) (progn 2 2 4))
 (if () (progn 1 2 3) (progn (tasu 1 2) (tasu 2 4)))
+
+(quote b)
 
 (deffun list (&rest objects) objects)
 (list (quote a) (quote b) abc)

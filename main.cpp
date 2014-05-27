@@ -268,7 +268,7 @@ namespace yakkai
         auto const space = std::string( indent * 2, ' ' );
 
         if ( is_nil( n ) ) {
-            std::cout << space << "nil" << std::endl;
+            std::cout << "(): unit" << std::endl;
             return;
 
         } else if ( n->type == node_type::e_list ) {
@@ -299,7 +299,7 @@ namespace yakkai
         auto const space = std::string( indent * 2, ' ' );
 
         if ( is_nil( n ) ) {
-            std::cout << space << "nil";
+            std::cout << "(): unit";
 
         } else if ( n->type == node_type::e_list ) {
 
@@ -895,14 +895,14 @@ namespace yakkai
             std::cout << "exception!: " << message << std::endl;
 
             ec = error_code::syntax;
-            return nullptr;
+            return nil_object;
 
         } catch( reached_to_eof const& e ) {
             std::cout << "reached to eof" << std::endl;
         }
 
         ec = error_code::unexpected;
-        return nullptr;
+        return nil_object;
     }
 
 
@@ -1572,7 +1572,7 @@ namespace yakkai
                 -> std::tuple<node*, std::shared_ptr<scope>>
             {
                 if ( is_nil( n ) ) {
-                    return std::forward_as_tuple( nullptr, current_scope );
+                    return std::forward_as_tuple( nil_object, current_scope );
 
                 } else if ( n->type == node_type::e_list ) {
                     // list is given
@@ -1723,7 +1723,7 @@ namespace yakkai
                 )
                 -> node*
             {
-                node* last_value = nullptr;
+                node* last_value = nil_object;
 
                 cons const* head = prog;
                 while( !is_nil( head ) ) {
@@ -1830,7 +1830,6 @@ namespace yakkai
                 cons const* const first = n;
                 if ( !is_symbol( first->car ) ) {
                     assert( false && "function name must be symbol" );
-                    return nullptr;
                 }
                 symbol const* const function_name_symbol = static_cast<symbol const* const>( first->car );
 
@@ -1838,7 +1837,6 @@ namespace yakkai
                 node* const second_n = first->cdr;
                 if ( !is_list( second_n ) || is_nil( second_n ) ) {
                     assert( false && "missing lambda argument" );
-                    return nullptr;
                 }
 
                 node* const lambda_form
@@ -1859,13 +1857,11 @@ namespace yakkai
                 cons* const first_n = n;
                 if ( !is_list( first_n ) || is_nil( first_n ) ) {
                     assert( false && "missing lambda argument" );
-                    return nullptr;
                 }
 
                 cons* const lambda_form = static_cast<cons* const>( first_n );
                 if ( !is_list( lambda_form->car ) ) {
                     assert( false && "function argument must be list" );
-                    return nullptr;
                 }
 
                 // set lambda form as callable!
@@ -1888,23 +1884,25 @@ namespace yakkai
                 cons const* const first = n;
 
                 assert( is_list( first->cdr ) );
-
                 cons const* const second = static_cast<cons const* const>( first->cdr );
+                if ( is_nil( second ) ) {
+                    assert( false && "few arguments for if" );
+                }
 
-                assert( !is_nil( second ) );
+                auto&& condition = as_node( eval( first->car, current_scope ) );
 
-                if ( is_nil( first->car ) ) {
-                    //  else
-                    return second->cdr;
+                if( !is_nil( condition ) ) {
+                    // then
+                    return as_node( eval( second->car, current_scope ) );
+
                 } else {
-                    auto&& condition = as_node( eval( first->car, current_scope ) );
+                    // else
+                    if ( is_nil( second->cdr ) ) {
+                        return second->cdr;
 
-                    if( !is_nil( condition ) ) {
-                        // then
-                        return as_node( eval( second->car, current_scope ) );
                     } else {
-                        // else
-                        return as_node( eval( second->cdr, current_scope ) );
+                        assert( is_list( second->cdr ) );
+                        return as_node( eval( static_cast<cons const* const>( second->cdr )->car, current_scope ) );
                     }
                 }
             }
@@ -2017,7 +2015,6 @@ int main()
 
 (tasu 1 (tasu 2103 1))
 
-<<<<<<< HEAD
 (progn 1 2 3)
 
 (progn (add 1 2) 2 3)
@@ -2025,10 +2022,16 @@ int main()
 (lambda (x) (multiply x x))
 
 ((lambda (x) (multiply x x)) 9)
-=======
+
+(if () 1)
+(if 1 72)
+
 (if () 1 2)
 (if 1 2 3)
->>>>>>> atif
+
+(if 1 (progn 1 2 3) (progn 2 2 4))
+(if () (progn 1 2 3) (progn 2 2 4))
+(if () (progn 1 2 3) (progn (tasu 1 2) (tasu 2 4)))
 
 (deffun list (&rest objects) objects)
 (list (quote a) (quote b) abc)

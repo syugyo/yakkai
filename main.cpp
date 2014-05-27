@@ -1,4 +1,4 @@
-#include <iostream>
+#include <iostrea>
 #include <string>
 #include <map>
 #include <memory>
@@ -1544,7 +1544,9 @@ namespace yakkai
                 //
                 def_global_native_function( "deffun", std::bind( &machine::define_function, this, _1, _2 ) );
                 def_global_native_function( "add", std::bind( &machine::add, this, _1, _2 ) );
-                def_global_native_function( "if" , std::bind( &machine::add, this, _1, _2 ) );
+                def_global_native_function( "if", std::bind( &machine::if_function, this, _1, _2 ) );
+                // def_global_native_function( "car", std::bind( &machine::car, this, _1 ) );
+                // def_global_native_function( "cdr", std::bind( &machine::cdr, this, _1 ) );
             }
 
         public:
@@ -1772,7 +1774,7 @@ namespace yakkai
                 assert( !is_nil( n ) );
 
                 // check function name
-                cons const* const first = static_cast<cons const* const>( n );
+                cons const* const first = n;
                 if ( !is_symbol( first->car ) ) {
                     assert( false && "function name must be symbol" );
                     return nullptr;
@@ -1801,6 +1803,35 @@ namespace yakkai
                 return lambda_form;
             }
 
+            auto if_function( cons const* const n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                assert( !is_nil( n ) );
+
+                cons const* const first = n;
+
+                assert( is_list( first->cdr ) );
+                
+                cons const* const second = static_cast<cons const* const>( first->cdr );
+
+                assert( !is_nil( second ) );
+
+                if ( is_nil( first->car ) ) {
+                    //  else
+                    return second->cdr;
+                } else {
+                    auto&& condition = as_node( eval( first->car, current_scope ) );
+                    
+                    if( !is_nil( condition ) ) {
+                        // then
+                        return as_node( eval( second->car, current_scope ) );
+                    } else {
+                        // else
+                        return as_node( eval( second->cdr, current_scope ) );
+                    }
+                }
+            }
+            
         private:
             std::shared_ptr<scope> scope_;
             gc gc_;
@@ -1904,6 +1935,9 @@ int main()
 (tasu 10 (tasu 1 (tasu 2 3)))
 
 (tasu 1 (tasu 2103 1))
+
+(if () 1 2)
+(if 1 2 3)
 
 (deffun list (&rest objects) objects)
 (list (quote a) (quote b) abc)

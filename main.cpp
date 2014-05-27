@@ -102,7 +102,7 @@ namespace yakkai
     struct native_function : public node
     {
         using func_type = std::function<
-            node* (cons const* const, std::shared_ptr<interpreter::scope> const&)
+            node* (cons* const, std::shared_ptr<interpreter::scope> const&)
             >;
 
         explicit native_function( func_type const& f )
@@ -1544,6 +1544,12 @@ namespace yakkai
                 //
                 def_global_native_function( "deffun", std::bind( &machine::define_function, this, _1, _2 ) );
                 def_global_native_function( "add", std::bind( &machine::add, this, _1, _2 ) );
+                def_global_native_function( "multiply", std::bind( &machine::multiply, this, _1, _2 ) );
+
+                def_global_native_function( "progn", std::bind( &machine::progn, this, _1, _2 ) );
+
+                def_global_native_function( "lambda", std::bind( &machine::make_lambda, this, _1, _2 ) );
+                def_global_native_function( "progn", std::bind( &machine::progn, this, _1, _2 ) );
             }
 
         public:
@@ -1716,14 +1722,14 @@ namespace yakkai
                     auto&& ret = eval( head->car, target_scope );
                     last_value = as_node( ret );
 
-                    head = static_cast<cons const*>( prog->cdr );
+                    head = static_cast<cons const*>( head->cdr );
                 }
 
                 return last_value;
             }
 
         private:
-            auto add( cons const* const n, std::shared_ptr<scope> const& current_scope )
+            auto add( cons* const n, std::shared_ptr<scope> const& current_scope )
                 -> node*
             {
                 node_type nt = node_type::e_integer;
@@ -1765,7 +1771,49 @@ namespace yakkai
                 }();
             }
 
-            auto define_function( cons const* const n, std::shared_ptr<scope> const& current_scope )
+            auto multiply( cons* const n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                node_type nt = node_type::e_integer;
+                double result = 1.0;
+
+                cons const* t = static_cast<cons const* const>( n );
+                while( !is_nil( t ) ) {
+                    auto&& v = as_node( eval( t->car, current_scope ) );
+
+                    if ( is_integer( v ) ) {
+                        auto&& typed_val = static_cast<integer_value const* const>( v );
+                        result *= typed_val->value;
+
+                    } else if ( is_float( v ) ) {
+                        auto&& typed_val = static_cast<float_value const* const>( v );
+                        assert( false );
+
+                    } else {
+                        // type error
+                        std::cout << "!!! type error" << std::endl;
+                        print2( v );
+                        assert( false );
+                    }
+
+                    assert( is_list( t->cdr ) );
+                    t = static_cast<cons const* const>( t->cdr );
+                }
+
+                return [&]() -> node* {
+                    if ( nt == node_type::e_integer ) {
+                         return gc_.make_object<integer_value>( result );
+
+                    } else if ( nt == node_type::e_float ) {
+                        assert( false );
+                    }
+
+                    assert( false );
+                    return nullptr;
+                }();
+            }
+
+            auto define_function( cons* const n, std::shared_ptr<scope> const& current_scope )
                 -> node*
             {
                 assert( !is_nil( n ) );
@@ -1785,7 +1833,28 @@ namespace yakkai
                     return nullptr;
                 }
 
-                cons* const lambda_form = static_cast<cons* const>( second_n );
+                node* const lambda_form
+                    = make_lambda( static_cast<cons* const>( second_n ), current_scope );
+
+                std::cout << "define function !> " << function_name_symbol->value << std::endl;
+                current_scope->def_symbol( function_name_symbol->value, lambda_form, current_scope->make_inner_scope() );
+
+                return lambda_form;
+            }
+
+            auto make_lambda( cons* const n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                assert( !is_nil( n ) );
+
+                // check argument
+                cons* const first_n = n;
+                if ( !is_list( first_n ) || is_nil( first_n ) ) {
+                    assert( false && "missing lambda argument" );
+                    return nullptr;
+                }
+
+                cons* const lambda_form = static_cast<cons* const>( first_n );
                 if ( !is_list( lambda_form->car ) ) {
                     assert( false && "function argument must be list" );
                     return nullptr;
@@ -1794,16 +1863,22 @@ namespace yakkai
                 // set lambda form as callable!
                 lambda_form->set_attribute( node_attribute::e_callable );
 
-                std::cout << "define function !> " << function_name_symbol->value << std::endl;
-                current_scope->def_symbol( function_name_symbol->value, lambda_form, current_scope->make_inner_scope() );
-
                 return lambda_form;
+            }
+
+            auto progn( cons const* const n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                assert( !is_nil( n ) );
+
+                return eval_prog_n( n, current_scope );
             }
 
         private:
             std::shared_ptr<scope> scope_;
             gc gc_;
         };
+
     } // namespace
 
 
@@ -1903,6 +1978,14 @@ int main()
 (tasu 10 (tasu 1 (tasu 2 3)))
 
 (tasu 1 (tasu 2103 1))
+
+(progn 1 2 3)
+
+(progn (add 1 2) 2 3)
+
+(lambda (x) (multiply x x))
+
+((lambda (x) (multiply x x)) 9)
 
 (deffun list (&rest objects) objects)
 (list (quote a) (quote b) abc)

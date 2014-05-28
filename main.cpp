@@ -610,13 +610,14 @@ namespace yakkai
             }
             number = std::stoll( std::string( base_it.it(), rng_it.it() ), nullptr, radix );
         }
-        skip_space( rng_it );
 
         //
         if ( !is_eof( rng_it ) && ( *rng_it == '.' || *rng_it == 'e' || *rng_it == 'E' ) ) {
             rng_it = begin;
             return nullptr;
         }
+
+        skip_space( rng_it );
 
         return make_node<integer_value>( number );
     }
@@ -637,15 +638,14 @@ namespace yakkai
         bool const has_sign = parse_sign( rng_it );
         if ( has_sign ) {
             number += std::string( begin.it(), rng_it.it() );
+
+            skip_space( rng_it );
         }
-        skip_space( rng_it );
 
         //
         bool const has_digit = [&]() mutable {
             RangedIterator base_it = rng_it;
             if ( parse_digit( rng_it ) ) {
-                skip_space( rng_it );
-
                 number += std::string( base_it.it(), rng_it.it() );
                 return true;
             }
@@ -657,7 +657,6 @@ namespace yakkai
         bool const has_float_point = [&]() mutable {
             if ( *rng_it == '.' ) {
                 step_iterator( rng_it );
-                skip_space( rng_it );
 
                 number += ".";
                 return true;
@@ -1675,7 +1674,7 @@ namespace yakkai
                     auto function_body = static_cast<cons const* const>( reciever )->cdr;
 
                     cons const* parameter_head = static_cast<cons const* const>( params );
-                    cons const* argument_head = args;
+                    cons* argument_head = args;
 
                     bool reached_to_last_parameter = false;
 
@@ -1695,18 +1694,48 @@ namespace yakkai
                                 );
 
                         } else if ( is_keyword( parameter_head->car ) ) {
-                            assert( false && "keyword was not supported yet" );
+                            // keyword
+                            auto&& k = static_cast<keyword const* const>( parameter_head->car );
+                            std::cout << "? -> " << k->value << std::endl;
+
+                            // update && take parameter name
+                            if ( is_nil( parameter_head->cdr ) ) {
+                                assert( false && "parameter name was not given" );
+                            }
+                            parameter_head = static_cast<cons const* const>( parameter_head->cdr );
+                            if ( !is_symbol( parameter_head->car ) ) {
+                                assert( false && "invalid parameter name" );
+                            }
+                            auto&& parameter_symbol = static_cast<symbol const* const>( parameter_head->car );
+
+                            if ( k->value == "&rest" ) {
+                                // set rest of arguments to this name
+                                new_scope->def_symbol(
+                                    parameter_symbol->value,
+                                    argument_head
+                                    );
+
+                                // terminate
+                                argument_head = nil_object;
+
+                                // break argument matching
+                                break;
+
+                            } else {
+                                assert( false && "keyword was not supported yet" );
+                            }
 
                         } else {
                             assert( false && "" );
                         }
 
-
                         parameter_head = static_cast<cons const* const>( parameter_head->cdr );
 
                         // argument
-                        argument_head = static_cast<cons const* const>( argument_head->cdr );
+                        argument_head = static_cast<cons* const>( argument_head->cdr );
                     }
+
+
 
                     assert( is_list( function_body ) );
                     return eval_prog_n(
@@ -2046,8 +2075,8 @@ int main()
 (quote b)
 
 (deffun list (&rest objects) objects)
-(list (quote a) (quote b) abc)
-(a . b)
+(list (quote a) (quote b) 123)
+(quote (1 . 2))
 ()
 1
 2
@@ -2056,8 +2085,6 @@ int main()
 +3.2e10
 +0E5
 .0e2
-e3
-nil
 )::";
 /* #10 r 10
 # 20 R20

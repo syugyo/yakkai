@@ -18,7 +18,7 @@ namespace yakkai
     };
 }
 
-#include "src/nodes.hpp"
+#include "yakkai/nodes.hpp"
 
 namespace yakkai
 {
@@ -131,7 +131,7 @@ namespace yakkai
 
 }
 
-#include "src/syntax.hpp"
+#include "yakkai/syntax.hpp"
 
 namespace yakkai {
 
@@ -175,8 +175,8 @@ namespace yakkai {
     }
 }
 
-#include "src/gc.hpp"
-#include "src/interpreter.hpp"
+#include "yakkai/gc.hpp"
+#include "yakkai/interpreter.hpp"
 
 
 

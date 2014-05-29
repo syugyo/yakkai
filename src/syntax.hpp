@@ -34,8 +34,7 @@ namespace yakkai
                         step_iterator( rng_it );
                     }
 
-                    node* volatile n = gc_->template make_object<symbol>( std::string( begin.it(), rng_it.it() ) );
-                    return n;
+                    return gc_->template make_object<symbol>( std::string( begin.it(), rng_it.it() ) );
 
                 } else {
                     rng_it = begin;
@@ -59,8 +58,7 @@ namespace yakkai
                         step_iterator( rng_it );
                     }
 
-                    node* volatile n = gc_->template make_object<keyword>( std::string( begin.it(), rng_it.it() ) );
-                    return n;
+                    return gc_->template make_object<keyword>( std::string( begin.it(), rng_it.it() ) );
 
                 } else {
                     rng_it = begin;
@@ -172,8 +170,7 @@ namespace yakkai
 
                 skip_space( rng_it );
 
-                node* volatile n = gc_->template make_object<integer_value>( number );
-                return n;
+                return gc_->template make_object<integer_value>( number );
             }
 
 
@@ -244,8 +241,7 @@ namespace yakkai
                         }
                     }
 
-                    node* volatile n = gc_->template make_object<float_value>( number, exp );
-                    return n;
+                    return gc_->template make_object<float_value>( number, exp );
 
                 } else {
                     rng_it = begin;
@@ -313,21 +309,13 @@ namespace yakkai
             auto parse_s_expression_or_closer( RangedIterator& rng_it )
                 -> node*
             {
-                node* volatile v = parse_s_expression( rng_it, true );
-                // print2( v );
-                // std::cout << (void*)&v << " -> " << (void*)v << std::endl;
-
-                return v;
+                return parse_s_expression( rng_it, true );
             }
 
             auto parse_s_expression_or_closer( RangedIterator& rng_it, cons* outer_cell )
                 -> cons*
             {
-                cons* volatile v = parse_s_expression( rng_it, outer_cell, true );
-                // print2( v );
-                // std::cout << (void*)&v << " -> " << (void*)v << std::endl;
-
-                return v;
+                return parse_s_expression( rng_it, outer_cell, true );
             }
 
 

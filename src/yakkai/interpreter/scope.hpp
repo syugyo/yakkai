@@ -1,3 +1,5 @@
+#pragma once
+
 #include <memory>
 #include <map>
 #include <list>
@@ -5,28 +7,13 @@
 
 #include <iostream>
 
-#include "nodes.hpp"
+#include "node.hpp"
 
 
 namespace yakkai
 {
     namespace interpreter
     {
-        template<typename F>
-        auto visit( node* n, F const& marker )
-            -> void
-        {
-            marker( n );
-            std::cout << debug_string( n->type ) << std::endl;
-
-            if ( is_list( n ) && !is_nil( n ) ) {
-                std::cout << "list" << std::endl;
-                auto* l = static_cast<cons*>( n );
-                visit( l->car, marker );
-                visit( l->cdr, marker );
-            }
-        }
-
         class scope
             : public std::enable_shared_from_this<scope>
         {

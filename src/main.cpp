@@ -1,290 +1,178 @@
 #include <iostream>
 #include <string>
-#include <map>
 #include <memory>
 #include <cassert>
-#include <cctype>
-#include <iterator>
-#include <stdexcept>
-#include <vector>
-#include <algorithm>
-#include <typeindex>
+
+#include "yakkai/memory/gc.hpp"
+#include "yakkai/interpreter/machine.hpp"
+#include "yakkai/syntax/parser.hpp"
+
+#include "yakkai/util/ranged_iterator.hpp"
+#include "yakkai/util/printer.hpp"
 
 
-namespace yakkai
+enum class error_code
 {
-    class reached_to_eof : std::exception
-    {
-    };
-}
+    none,
+    syntax,
+    unexpected,
+    reached_to_eof
+};
 
-#include "yakkai/nodes.hpp"
 
-namespace yakkai
+template<typename Parser, typename It>
+auto parse_one_expression( Parser& p, It& rng_it, error_code& ec )
+    -> yakkai::node*
 {
-    auto print2( node const* const n, std::size_t indent = 0 )
-        -> void
-    {
-        auto const space = std::string( indent * 2, ' ' );
+    // reset error code
+    ec = error_code::none;
 
-        if ( n == nullptr ) {
-            return;
-        }
+    try {
+        return p.parse_s_expression( rng_it );
 
-        if ( is_nil( n ) ) {
-            std::cout << "(): unit";
+    } catch( char const* const message ) {
+        std::cout << "exception!: " << message << std::endl;
 
-        } else if ( n->type == node_type::e_list ) {
+        ec = error_code::syntax;
+        return nullptr;
 
-            std::cout << "( ";
-            auto c = static_cast<cons const* const>( n );
-            for(;;) {
-                print2( c->car, indent + 1 );
-                std::cout << " ";
-                if ( is_nil( c->cdr ) ) {
-                    break;
-                }
-
-                assert( c->cdr->type == node_type::e_list );
-                c = static_cast<cons const* const>( c->cdr );
-            }
-            std::cout << "): e_list";
-
-        } else if ( n->type == node_type::e_symbol ) {
-            auto s = static_cast<symbol const* const>( n );
-            std::cout << s->value << ": symbol";
-
-        } else if ( n->type == node_type::e_integer ) {
-            auto s = static_cast<integer_value const* const>( n );
-            std::cout << s->value << ": int";
-
-        } else if ( n->type == node_type::e_float ) {
-            auto s = static_cast<float_value const* const>( n );
-            std::cout << s->number << "e" << s->exp << ": float";
-
-        } else {
-            std::cout << debug_string( n->type ) << " : !!Unknown!!";
-        }
-
-        if ( indent == 0 ) {
-            std::cout << std::endl;
-        }
-    }
-
-
-
-    template<typename Iterator>
-    struct ranged_iterator
-    {
-        typedef ranged_iterator                                     self_type;
-        typedef typename std::iterator_traits<Iterator>::value_type value_type;
-
-
-        ranged_iterator( Iterator const& it, Iterator const& end )
-            : it_( it )
-            , end_( end )
-        {}
-
-        auto operator++()
-            -> self_type&
-        {
-            ++it_;
-
-            return *this;
-        }
-
-        auto operator*() const
-            -> value_type const&
-        {
-            if ( it_ == end_ ) throw std::out_of_range( "" );
-
-            return *it_;
-        }
-
-        // comparison
-        friend inline auto operator==( self_type const& lhs, self_type const& rhs )
-            -> bool
-        {
-            return lhs.it_ == rhs.it_;
-        }
-
-        friend inline auto operator!=( self_type const& lhs, self_type const& rhs )
-            -> bool
-        {
-            return !( lhs == rhs );
-        }
-
-        auto it()
-            -> Iterator
-        {
-            return it_;
-        }
-
-        auto end()
-            -> Iterator
-        {
-            return end_;
-        }
-
-        Iterator it_, end_;
-    };
-
-}
-
-#include "yakkai/syntax.hpp"
-
-namespace yakkai {
-
-
-
-
-
-
-
-    enum class error_code
-    {
-        none,
-        syntax,
-        unexpected,
-        reached_to_eof
-    };
-
-    template<typename T, typename GC>
-    auto parse_one_expression( ranged_iterator<T>& rng_it, GC const& gc, error_code& ec )
-        -> node*
-    {
-        ec = error_code::none;
-
-        try {
-            return parse_program( rng_it, gc );
-
-        } catch( char const* const message ) {
-            std::cout << "exception!: " << message << std::endl;
-
-            ec = error_code::syntax;
-            return nullptr;
-
-        } catch( reached_to_eof const& e ) {
-            std::cout << "reached to eof" << std::endl;
-            ec = error_code::reached_to_eof;
-            return nullptr;
-        }
-
-        ec = error_code::unexpected;
+    } catch( yakkai::reached_to_eof const& e ) {
+        std::cout << "reached to eof" << std::endl;
+        ec = error_code::reached_to_eof;
         return nullptr;
     }
+
+    ec = error_code::unexpected;
+    return nullptr;
 }
 
-#include "yakkai/gc.hpp"
-#include "yakkai/interpreter.hpp"
 
-
-
-
-
-
-namespace yakkai
+//
+auto eval_source_code(
+    int const volatile* const volatile stack_base,
+    std::string const& source
+    )
+    -> void
 {
-    auto test( std::string const& source, int const volatile* const volatile stack_base )
-        -> void
-    {
-        auto rng_it = ranged_iterator<std::string::const_iterator>( source.cbegin(), source.cend() );
+    using namespace yakkai;
+    using itearator_t = ranged_iterator<std::string::const_iterator>;
 
-        error_code ec;
+    auto rng_it = itearator_t( source.cbegin(), source.cend() );
 
-        auto&& gc = std::make_shared<memory::gc>( stack_base );
-        interpreter::machine<memory::gc> m( gc );
+    error_code ec;
+
+    //
+    auto&& gc = std::make_shared<memory::gc>( stack_base );
+
+    //
+    syntax::s_exp_parser<itearator_t, memory::gc> p( gc );
+    interpreter::machine<memory::gc> m( gc );
+
+    //
+    for (;;) {
+        auto s = parse_one_expression( p, rng_it, ec );
+
+        std::cout << "<=== section ===>" << std::endl;
+        std::cout << "Parsed Result #=> ";
+        print_node( s );
+
+        if ( ec == error_code::none ) {
+            //
+            auto&& e = m.eval( s );
+            std::cout << "Evaled Result #=> ";
+            print_node( e );
+            std::cout << std::endl;
+
+        } else if ( ec == error_code::syntax ) {
+            std::cout << "syntax error" << std::endl;
+            break;
+
+        } else if ( ec == error_code::reached_to_eof ) {
+            std::cout << "reached to eof" << std::endl;
+            break;
+
+        } else {
+            assert( false );
+        }
+
+
+        if ( rng_it.it() == rng_it.end() ) {
+            break;
+        }
+    }
+}
+
+
+//
+int repl(
+    int const volatile* const volatile stack_base
+    )
+{
+    using namespace yakkai;
+    using itearator_t = ranged_iterator<std::string::const_iterator>;
+
+    auto&& gc = std::make_shared<memory::gc>( stack_base );
+
+    syntax::s_exp_parser<itearator_t, memory::gc> p( gc );
+    interpreter::machine<memory::gc> m( gc );
+
+    // REPL loop
+    std::string input;
+
+    for(;;) {
+        // Read
+        std::cout << "in > ";
+
+        std::getline( std::cin, input );
 
         //
-        for (;;) {
-            auto s = parse_one_expression( rng_it, gc, ec );
+        auto rng_it = itearator_t( input.cbegin(), input.cend() );
+        while( rng_it.it() != rng_it.end() ) {
+            error_code error;
+            auto s = parse_one_expression( p, rng_it, error );
 
-            std::cout << "<=== section ===>" << std::endl;
-            std::cout << "Parsed Result #=> ";
-            print2( s );
+            // std::cout << "<=== section ===>" << std::endl;
+            // std::cout << "Parsed Result #=> ";
+            // print_node( s );
 
-            if ( ec == error_code::none ) {
+            if ( error == error_code::none ) {
                 //
                 auto&& e = m.eval( s );
-                std::cout << "Evaled Result #=> ";
-                print2( e );
-                std::cout << std::endl;
+                print_node( e );
 
-            } else if ( ec == error_code::syntax ) {
+            } else if ( error == error_code::syntax ) {
                 std::cout << "syntax error" << std::endl;
                 break;
 
-            } else if ( ec == error_code::reached_to_eof ) {
+            } else if ( error == error_code::reached_to_eof ) {
                 std::cout << "reached to eof" << std::endl;
                 break;
 
             } else {
                 assert( false );
             }
-
-
-            if ( rng_it.it() == rng_it.end() ) {
-                break;
-            }
         }
     }
-
-    auto eval_source_code( std::string const& source )
-        -> void
-    {
-        // make dummy object into stack to get stack address...
-        // __attribute__( (aligned(sizeof( void* ))) ) int volatile _dummy_stack_start_object;
-        alignas( void* ) int volatile _dummy_stack_start_object;
-
-        test( source, &_dummy_stack_start_object );
-    }
-
-} // namespace yakkai
-
-#if 0
-void test( yakkai::interpreter::gc& g )
-{
-    struct A
-    {
-        int ababa[128];
-
-        A( int i )
-            : ababa{ i }
-        {}
-
-        ~A()
-        {
-            std::cout << "destructed: " << ababa[0] << std::endl;
-        }
-
-        void f() const
-        {
-            std::cout << "f: " << ababa[0] << std::endl;
-        }
-    };
-
-    A* p = nullptr;
-    A* oldp = nullptr;
-    for( int i=0; i<10; ++i ) {
-        p = g.allocate<A>( i );
-        if ( oldp != nullptr ) {
-            oldp->f();
-        }
-
-        std::cout << (void*)p << " and " << (void*)oldp << std::endl;
-
-        oldp = p;
-    }
-
-    std::cout << "pointer: " << sizeof( A* ) << "/" << alignof( A* )<< std::endl;
 }
-#endif
+
+
+template<typename F, typename... Args>
+auto exec_with_stack_base( F&& f, Args&&... args )
+    -> decltype( ( std::forward<F>( f ) )( std::declval<int volatile*>(), std::forward<Args>( args )... ) )
+{
+    // make dummy object into stack to get stack address...
+    // __attribute__( (aligned(sizeof( void* ))) ) int volatile _dummy_stack_start_object;
+    alignas( void* ) int volatile _dummy_stack_start_object;
+
+    return ( std::forward<F>( f ) )( &_dummy_stack_start_object, std::forward<Args>( args )... );
+}
 
 
 int main()
 {
+    // exec_with_stack_base( repl );
 
-
+#if 1
     std::string const test_case = R"::(
 (add 1 2 3 4)
 (deffun tasu (a b) (add a b))
@@ -335,30 +223,6 @@ int main()
 #10r10/3
 */
     std::cout << test_case << std::endl;
-
-
-    yakkai::eval_source_code( test_case );
-
-#if 0
-    // make dummy object into stack to get stack address...
-    alignas( void*) int volatile _dummy_stack_start_object;
-
-    {
-        yakkai::interpreter::gc g( &_dummy_stack_start_object );
-        test( g );
-    }
-#endif
-
-#if 0
-    yakkai::interpreter::page p( 24 );
-
-    for( int i=0; i<10000000; ++i ) {
-        auto const index = p.find_free_block_index();
-        if ( index == std::numeric_limits<std::size_t>::max() ) {
-            break;
-        }
-        std::cout << index << std::endl;
-        p.mark_as_used( index );
-    }
+    exec_with_stack_base( eval_source_code, test_case );
 #endif
 }

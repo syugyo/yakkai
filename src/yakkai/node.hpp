@@ -55,6 +55,7 @@ namespace yakkai
         }
     }
 
+
     //
     enum class node_attribute
     {

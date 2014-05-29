@@ -1,6 +1,9 @@
+#pragma once
+
 #include <functional>
 
-#include "nodes.hpp"
+#include "scope.hpp"
+#include "../node.hpp"
 
 
 namespace yakkai

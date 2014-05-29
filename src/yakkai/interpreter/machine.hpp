@@ -1,14 +1,15 @@
+#pragma once
+
 #include <memory>
 #include <map>
 #include <cassert>
 
 #include <iostream>
 
-#include "nodes.hpp"
-
-#include "static_context.hpp"
-#include "interpreter_scope.hpp"
-#include "interpreter_node.hpp"
+#include "node.hpp"
+#include "scope.hpp"
+#include "../node.hpp"
+#include "../static_context.hpp"
 
 
 namespace yakkai
@@ -90,7 +91,7 @@ namespace yakkai
 
                     } else {
                         // TODO: check that is macro given...
-                        print2( as_node( head_p ) );
+                        print_node( as_node( head_p ) );
                         assert( false && "reciever is not callable..." );
                     }
 
@@ -283,7 +284,7 @@ namespace yakkai
                     } else {
                         // type error
                         std::cout << "!!! type error" << std::endl;
-                        print2( v );
+                        print_node( v );
                         assert( false );
                     }
 
@@ -325,7 +326,7 @@ namespace yakkai
                     } else {
                         // type error
                         std::cout << "!!! type error" << std::endl;
-                        print2( v );
+                        print_node( v );
                         assert( false );
                     }
 

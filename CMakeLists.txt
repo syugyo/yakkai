@@ -6,10 +6,11 @@ CMAKE_MINIMUM_REQUIRED( VERSION 2.8 )
 include_directories( "${PROJECT_SOURCE_DIR}" )
 
 #
-add_definitions(
-    -std=c++11
-    -Wall
-    )
+if(APPLE)
+  set( CMAKE_CXX_FLAGS "-std=c++11 -stdlib=libc++ -Wall" )
+else(UNIX)
+  set( CMAKE_CXX_FLAGS "-std=c++11 -Wall" )
+endif(APPLE)
 
 #
 file( GLOB_RECURSE files ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp )

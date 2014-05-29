@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-g++ main.cpp -Wall -std=c++11
+g++ -Wall -std=c++11 main.cpp src/static_context.cpp src/nodes.cpp

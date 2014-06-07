@@ -9,6 +9,7 @@ namespace yakkai
             -> std::ostream&
         {
             if ( n == nullptr ) {
+                os << "test" << std::endl;
                 return os;
             }
 

@@ -204,9 +204,21 @@ int main()
 (if () (progn 1 2 3) (progn (tasu 1 2) (tasu 2 4)))
 
 (quote b)
+(quote (1 2 3))
 
 (deffun list (&rest objects) objects)
 (list (quote a) (quote b) 123)
+
+(car ())
+(car (quote (1 2 3)))
+(car (quote ((1 2) 3)))
+
+(cdr (quote (1 2)))
+(cdr ())
+(cdr (quote (1 2 3)))
+
+(car (cdr (quote (1 2 3))))
+
 (quote (1 . 2))
 ()
 1

@@ -10,6 +10,7 @@
 #include "scope.hpp"
 #include "../node.hpp"
 #include "../static_context.hpp"
+#include "../util/printer.hpp"
 
 
 namespace yakkai
@@ -39,8 +40,8 @@ namespace yakkai
                 def_global_native_function( "quote", std::bind( &machine::quote, this, _1, _2 ) );
 
                 def_global_native_function( "if", std::bind( &machine::if_function, this, _1, _2 ) );
-                // def_global_native_function( "car", std::bind( &machine::car, this, _1 ) );
-                // def_global_native_function( "cdr", std::bind( &machine::cdr, this, _1 ) );
+                def_global_native_function( "car", std::bind( &machine::car_func, this, _1, _2 ) );
+                def_global_native_function( "cdr", std::bind( &machine::cdr_func, this, _1, _2) );
             }
 
         private:
@@ -351,8 +352,8 @@ namespace yakkai
                 -> node*
             {
                 assert( !is_nil( n ) );
-
-                return n;
+                
+                return n->car;
             }
 
             auto define_function( cons* const n, std::shared_ptr<scope> const& current_scope )
@@ -425,7 +426,7 @@ namespace yakkai
 
                 auto&& condition = as_node( eval( first->car, current_scope ) );
 
-                if( !is_nil( condition ) ) {
+                if ( !is_nil( condition ) ) {
                     // then
                     return as_node( eval( second->car, current_scope ) );
 
@@ -438,6 +439,53 @@ namespace yakkai
                         assert( is_list( second->cdr ) );
                         return as_node( eval( static_cast<cons const* const>( second->cdr )->car, current_scope ) );
                     }
+                }
+            }
+
+            auto car_func( cons* const n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                if ( is_nil( n ) ) {
+                    return static_context::nil_object;
+                }
+                
+                node const* const econs = as_node( eval( n->car, current_scope ) );
+                
+                assert( is_list( econs ) );
+
+                if( is_nil( econs ) ) {
+                    return static_context::nil_object;     
+                } else {
+                    return static_cast<cons const* const>( econs )->car;                    
+                }
+            }
+
+            auto cdr_func( cons* const n, std::shared_ptr<scope> const& current_scope )
+                -> node*
+            {
+                if ( is_nil( n ) ) {
+                    return static_context::nil_object;
+                }
+                
+                assert( is_list( n->cdr ) );
+                
+                if ( is_nil( n->cdr ) ) {
+                    return static_context::nil_object;
+                }
+
+                cons const* const second = static_cast<cons const* const>( n->cdr );
+
+                assert( is_list( second ) );
+                assert( !is_nil( second->car ) );
+
+                print_node( second->car );
+                
+                node const* const econs = as_node( eval( second->car, current_scope ) );
+                
+                if( is_nil( econs ) ) {
+                    return static_context::nil_object;     
+                } else {
+                    return static_cast<cons const* const>( econs )->car;
                 }
             }
 

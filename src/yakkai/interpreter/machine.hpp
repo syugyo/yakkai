@@ -448,6 +448,8 @@ namespace yakkai
                 if ( is_nil( n ) ) {
                     return static_context::nil_object;
                 }
+
+                assert( is_list( n->car ) );
                 
                 node const* const econs = as_node( eval( n->car, current_scope ) );
                 
@@ -466,26 +468,17 @@ namespace yakkai
                 if ( is_nil( n ) ) {
                     return static_context::nil_object;
                 }
-                
-                assert( is_list( n->cdr ) );
-                
-                if ( is_nil( n->cdr ) ) {
-                    return static_context::nil_object;
-                }
 
-                cons const* const second = static_cast<cons const* const>( n->cdr );
+                assert( is_list( n->car ) );
 
-                assert( is_list( second ) );
-                assert( !is_nil( second->car ) );
+                node const* const econs = as_node( eval( n->car, current_scope ) );
+                
+                assert( is_list( econs ) );
 
-                print_node( second->car );
-                
-                node const* const econs = as_node( eval( second->car, current_scope ) );
-                
                 if( is_nil( econs ) ) {
                     return static_context::nil_object;     
                 } else {
-                    return static_cast<cons const* const>( econs )->car;
+                    return static_cast<cons const* const>( econs )->cdr;                    
                 }
             }
 
